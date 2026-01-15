@@ -14,6 +14,8 @@ A detailed guide for developers to understand, modify, and deploy the AI chat ba
 6. [How Messages Flow (Frontend ↔ Backend)](#how-messages-flow-frontend--backend)
 7. [How to Add Rate Limiting Rules](#how-to-add-rate-limiting-rules)
 8. [Local Development](#local-development)
+   - [Understanding the venv Folder](#understanding-the-venv-folder)
+   - [Alternative: Use Docker for Local Testing](#alternative-use-docker-for-local-testing-no-venv-needed)
 9. [Deployment Commands](#deployment-commands)
 10. [Troubleshooting](#troubleshooting)
 
@@ -40,6 +42,8 @@ This is a FastAPI backend that:
 
 ```
 CHAT-API/
+├── venv/                    # Python virtual environment (LOCAL DEV ONLY)
+│                            # Can be deleted - recreate with: python -m venv venv
 ├── app/
 │   ├── __init__.py
 │   ├── main.py              # App entry point, CORS setup
@@ -64,10 +68,12 @@ CHAT-API/
 ├── requirements.txt         # Python dependencies
 ├── .env                     # Local environment variables
 ├── .env.example             # Template
-└── .gcloudignore            # Files to exclude from deploy
+└── .gcloudignore            # Files to exclude from deploy (includes venv/)
 ```
 
 **★ = Files you'll most likely need to modify**
+
+**Note:** The `venv/` folder is only for local development. It's excluded from Cloud Run deployments via `.gcloudignore`. See [Understanding the venv Folder](#understanding-the-venv-folder) for details.
 
 ---
 
@@ -677,6 +683,115 @@ async def chat_stream(request: Request, body: ChatRequest):
 
 ## Local Development
 
+### Understanding the `venv` Folder
+
+The `venv` folder is a **Python virtual environment** - it's only needed for local development.
+
+```
+CHAT-API/
+├── venv/                    # ← Virtual environment (LOCAL DEV ONLY)
+│   ├── Scripts/             # Python executables (Windows)
+│   │   ├── python.exe
+│   │   ├── pip.exe
+│   │   └── Activate.ps1     # Activation script
+│   ├── Lib/                 # Installed packages
+│   │   └── site-packages/
+│   │       ├── fastapi/
+│   │       ├── langchain/
+│   │       └── ...
+│   └── pyvenv.cfg
+├── app/                     # Your code
+├── requirements.txt         # Package list
+└── ...
+```
+
+**What venv does:**
+- Creates isolated Python environment
+- Installs packages without affecting system Python
+- Keeps dependencies separate per project
+
+**When you need venv:**
+
+| Scenario | venv needed? |
+|----------|--------------|
+| Local development (`uvicorn app.main:app`) | **Yes** |
+| Cloud Run deployment | **No** - Docker installs from `requirements.txt` |
+| Testing API changes locally | **Yes** |
+| Just deploying code changes | **No** |
+
+**Can I delete venv?**
+
+Yes! You can always recreate it:
+
+```powershell
+cd W:\CHAT-API
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+**Why is venv ignored in deployment?**
+
+The `.gcloudignore` file excludes venv from Cloud Run builds:
+```
+venv/
+.venv/
+__pycache__/
+```
+
+Docker builds a fresh environment using `requirements.txt`, so the local venv is never uploaded.
+
+---
+
+### Alternative: Use Docker for Local Testing (No venv needed)
+
+If you prefer not to use venv, you can run the backend locally using Docker instead.
+
+**Build and run:**
+```powershell
+cd W:\CHAT-API
+
+# Build the Docker image
+docker build -t chat-api .
+
+# Run the container
+docker run -p 8080:8080 `
+    -e OPENAI_API_KEY=sk-proj-your-key-here `
+    -e LLM_PROVIDER=openai `
+    -e OPENAI_MODEL=gpt-4o-mini `
+    chat-api
+```
+
+Test at: `http://localhost:8080/health`
+
+**For faster iteration (mount code as volume):**
+```powershell
+docker run -p 8080:8080 `
+    -e OPENAI_API_KEY=sk-proj-your-key-here `
+    -e LLM_PROVIDER=openai `
+    -v ${PWD}/app:/app/app `
+    chat-api
+```
+
+This mounts your local `app/` folder into the container, so code changes are reflected without rebuilding.
+
+**Comparison: venv vs Docker for local dev**
+
+| Aspect | venv | Docker |
+|--------|------|--------|
+| Setup | `python -m venv venv && pip install -r requirements.txt` | `docker build -t chat-api .` |
+| Run | `uvicorn app.main:app --reload` | `docker run -p 8080:8080 ...` |
+| Hot reload | Yes (with `--reload`) | No (unless using volume mount) |
+| Matches production | No (your local Python) | Yes (identical environment) |
+| Rebuild on code change | No | Yes (or use volume mount) |
+| Disk space | ~200MB | ~500MB (Docker image) |
+
+**Recommendation:**
+- Use **venv** if you're making frequent code changes (faster iteration)
+- Use **Docker** if you want to test in production-identical environment
+
+---
+
 ### Prerequisites
 
 - Python 3.11+
@@ -978,10 +1093,14 @@ gcloud builds log BUILD_ID
 ┌─────────────────────────────────────────────────────────────┐
 │                    CHAT-API Quick Reference                 │
 ├─────────────────────────────────────────────────────────────┤
-│ LOCAL DEV                                                   │
+│ LOCAL DEV (venv)                                            │
 │   cd W:\CHAT-API                                            │
 │   .\venv\Scripts\Activate.ps1                               │
 │   uvicorn app.main:app --reload --port 8080                 │
+├─────────────────────────────────────────────────────────────┤
+│ LOCAL DEV (Docker - no venv needed)                         │
+│   docker build -t chat-api .                                │
+│   docker run -p 8080:8080 -e OPENAI_API_KEY=sk-xxx chat-api │
 ├─────────────────────────────────────────────────────────────┤
 │ DEPLOY CODE CHANGES                                         │
 │   gcloud builds submit --tag gcr.io/ah-studio-chat/chat-api │
