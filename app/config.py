@@ -1,0 +1,70 @@
+"""
+Application configuration from environment variables.
+"""
+
+from pydantic_settings import BaseSettings
+from typing import Literal, Optional
+from functools import lru_cache
+
+
+class Settings(BaseSettings):
+    """Application configuration loaded from environment variables."""
+
+    # App Identity (customize for your project)
+    app_name: str = "CHAT-API"
+    app_description: str = "Reusable AI-powered chat assistant backend"
+
+    # LLM Provider Configuration
+    llm_provider: Literal["openai", "anthropic"] = "openai"
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+
+    # Model Configuration
+    openai_model: str = "gpt-4o-mini"
+    anthropic_model: str = "claude-3-haiku-20240307"
+
+    # Custom System Prompt (optional - overrides default)
+    # Can be a string or path to a file
+    system_prompt_en: Optional[str] = None
+    system_prompt_zh: Optional[str] = None
+    system_prompt_file: Optional[str] = None  # Path to prompts JSON file
+
+    # Generation Settings
+    max_tokens: int = 512  # Reduced from 1024 to save tokens
+    temperature: float = 0.7
+
+    # Rate Limiting
+    rate_limit_requests: int = 20
+    rate_limit_window: int = 60  # seconds
+
+    # Cost Protection
+    max_input_length: int = 500  # Max characters per user message
+    max_messages_per_session: int = 20  # Max messages in conversation
+    max_context_messages: int = 10  # Only send last N messages to LLM
+
+    # CORS Configuration (customize for your frontend domains)
+    cors_origins: str = "http://localhost:5173,http://localhost:3000"
+
+    # Server Configuration
+    app_env: str = "production"
+    log_level: str = "INFO"
+    host: str = "0.0.0.0"
+    port: int = 8080
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS origins into a list (supports comma or semicolon separator)."""
+        # Support both comma and semicolon as separators (semicolon for Cloud Run)
+        origins = self.cors_origins.replace(";", ",")
+        return [origin.strip() for origin in origins.split(",") if origin.strip()]
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+        extra = "ignore"
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Get cached settings instance."""
+    return Settings()

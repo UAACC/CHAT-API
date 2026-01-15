@@ -1,0 +1,21 @@
+# Core Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# SSE Streaming
+sse-starlette>=2.0.0
+
+# LangChain (use latest for better Windows compatibility)
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-anthropic>=0.1.0
+langchain-core>=0.1.0
+
+# Rate Limiting
+slowapi>=0.1.9
+
+# Utilities
+python-dotenv>=1.0.0
+httpx>=0.26.0
