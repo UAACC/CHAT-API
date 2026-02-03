@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routes import health, chat
+from app.routes import health, chat, rag
 
 # Get settings
 settings = get_settings()
@@ -31,6 +31,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"LLM Provider: {settings.llm_provider}")
     logger.info(f"Environment: {settings.app_env}")
     logger.info(f"CORS Origins: {settings.cors_origins_list}")
+    logger.info(f"RAG Enabled: Pinecone={settings.pinecone_index}, GCS={settings.gcs_bucket}")
     yield
     logger.info(f"Shutting down {settings.app_name}")
 
@@ -48,7 +49,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
@@ -56,6 +57,7 @@ app.add_middleware(
 # Include routers
 app.include_router(health.router)
 app.include_router(chat.router)
+app.include_router(rag.router)
 
 
 if __name__ == "__main__":

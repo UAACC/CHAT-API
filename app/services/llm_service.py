@@ -86,6 +86,112 @@ def build_langchain_messages(messages: list[ChatMessage], locale: str) -> list:
     return langchain_messages
 
 
+def build_langchain_messages_with_rag(
+    messages: list[ChatMessage],
+    locale: str,
+    context_chunks: list[dict],
+) -> list:
+    """
+    Convert API messages to LangChain message format with RAG context.
+
+    The retrieved context is prepended to the system prompt to provide
+    relevant information for answering user queries.
+
+    Args:
+        messages: List of chat messages from API request
+        locale: Language locale for system prompt selection
+        context_chunks: List of retrieved context dicts with 'text', 'filename', 'score'
+
+    Returns:
+        List of LangChain message objects with RAG context
+    """
+    # Build RAG context section
+    if context_chunks:
+        context_text = "\n\n---\n\n".join([
+            f"[Source: {chunk.get('filename', 'Unknown')}]\n{chunk.get('text', '')}"
+            for chunk in context_chunks
+        ])
+        rag_prefix = f"""The following information has been retrieved from the knowledge base to help answer the user's question:
+
+<retrieved_context>
+{context_text}
+</retrieved_context>
+
+Use this context to inform your response when relevant. If the context doesn't contain the answer, say so clearly.
+
+---
+
+"""
+    else:
+        rag_prefix = ""
+
+    # Combine RAG context with system prompt
+    system_prompt = get_system_prompt(locale)
+    enhanced_system_prompt = rag_prefix + system_prompt
+
+    langchain_messages = [SystemMessage(content=enhanced_system_prompt)]
+
+    # Add conversation history
+    for msg in messages:
+        if msg.role == "user":
+            langchain_messages.append(HumanMessage(content=msg.content))
+        elif msg.role == "assistant":
+            langchain_messages.append(AIMessage(content=msg.content))
+
+    return langchain_messages
+
+
+async def generate_response_with_rag(
+    messages: list[ChatMessage],
+    locale: str,
+    context_chunks: list[dict],
+) -> str:
+    """
+    Generate a complete response with RAG context (non-streaming).
+
+    Args:
+        messages: Conversation history
+        locale: Response language preference
+        context_chunks: Retrieved context from vector store
+
+    Returns:
+        Complete response string
+    """
+    llm = get_llm()
+    langchain_messages = build_langchain_messages_with_rag(messages, locale, context_chunks)
+
+    logger.info(f"Generating RAG response for {len(messages)} messages with {len(context_chunks)} context chunks")
+
+    response = await llm.ainvoke(langchain_messages)
+    return response.content
+
+
+async def generate_response_stream_with_rag(
+    messages: list[ChatMessage],
+    locale: str,
+    context_chunks: list[dict],
+) -> AsyncGenerator[str, None]:
+    """
+    Generate a streaming response with RAG context.
+
+    Args:
+        messages: Conversation history
+        locale: Response language preference
+        context_chunks: Retrieved context from vector store
+
+    Yields:
+        Response tokens/chunks as they are generated
+    """
+    llm = get_llm()
+    langchain_messages = build_langchain_messages_with_rag(messages, locale, context_chunks)
+
+    logger.info(f"Streaming RAG response for {len(messages)} messages with {len(context_chunks)} context chunks")
+
+    async for chunk in llm.astream(langchain_messages):
+        if chunk.content:
+            yield chunk.content
+
+
 async def generate_response(messages: list[ChatMessage], locale: str) -> str:
     """
     Generate a complete response (non-streaming).

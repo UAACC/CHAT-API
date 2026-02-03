@@ -1,0 +1,4 @@
+gcloud run deploy chat-api --project=ah-studio-chat --region=us-central1 --source=. --set-secrets="OPENAI_API_KEY=openai-api-key:latest" --set-secrets="PINECONE_API_KEY=pinecone-api-key:latest" 
+
+##更新文件
+curl.exe -X POST -F "file=@knowledge_base.md" https://chat-api-204227115712.us-central1.run.app/rag/documents/upload

@@ -51,6 +51,26 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
 
+    # RAG - Pinecone Configuration
+    pinecone_api_key: str = ""
+    pinecone_index: str = "chat-api-rag-ahstudio"
+
+    # RAG - Google Cloud Storage Configuration
+    gcs_bucket: str = "chat-api-rag-documents"
+    gcs_prefix: str = "documents"
+
+    # RAG - Embedding Configuration
+    embedding_model: str = "text-embedding-3-small"
+
+    # RAG - Document Processing
+    rag_chunk_size: int = 512
+    rag_chunk_overlap: int = 64
+    rag_max_file_size_mb: int = 10
+
+    # RAG - Query Configuration
+    rag_default_top_k: int = 5
+    rag_min_score_threshold: float = 0.1
+
     @property
     def cors_origins_list(self) -> list[str]:
         """Parse CORS origins into a list (supports comma or semicolon separator)."""
