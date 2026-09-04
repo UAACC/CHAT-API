@@ -5,10 +5,14 @@
 # LLM Provider Configuration
 # ===========================================
 
-# Provider: openai | anthropic
-LLM_PROVIDER=openai
+# Provider: openai | anthropic | gemini
+LLM_PROVIDER=gemini
 
-# OpenAI Configuration
+# Gemini Configuration (free tier - get a key at https://aistudio.google.com/apikey)
+GEMINI_API_KEY=your-gemini-api-key-here
+GEMINI_MODEL=gemini-3.1-flash-lite
+
+# OpenAI Configuration (if using openai provider)
 OPENAI_API_KEY=sk-your-openai-api-key-here
 OPENAI_MODEL=gpt-4o-mini
 

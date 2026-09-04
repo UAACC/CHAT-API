@@ -15,13 +15,18 @@ class Settings(BaseSettings):
     app_description: str = "Reusable AI-powered chat assistant backend"
 
     # LLM Provider Configuration
-    llm_provider: Literal["openai", "anthropic"] = "openai"
+    llm_provider: Literal["openai", "anthropic", "gemini"] = "openai"
     openai_api_key: str = ""
     anthropic_api_key: str = ""
+    gemini_api_key: str = ""
 
     # Model Configuration
     openai_model: str = "gpt-4o-mini"
     anthropic_model: str = "claude-3-haiku-20240307"
+    # Flash-Lite has the highest free-tier daily request quota and does not
+    # "think" by default. Non-lite Flash models spend most of MAX_TOKENS on
+    # thinking and return truncated answers unless MAX_TOKENS is raised a lot.
+    gemini_model: str = "gemini-3.1-flash-lite"
 
     # Custom System Prompt (optional - overrides default)
     # Can be a string or path to a file

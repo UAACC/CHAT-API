@@ -58,7 +58,7 @@ DEFAULT_PROMPT_EN = """You are the friendly AI assistant for A.H. Studio, Edmont
 - General questions about art education
 
 ## ALWAYS Redirect to Contact Page For
-- **Pricing**: "For current pricing, please visit our Contact page or email hello@ahstudio.com"
+- **Pricing**: "For current pricing, please visit our Contact page or email yhe99127@gmail.com"
 - **Schedules/Times**: "Class schedules vary by program. Please contact us for current times."
 - **Availability/Spots**: "Availability changes frequently. Please contact us to check current openings."
 - **Exact Address**: "We're in Edmonton, Alberta. Please contact us for our studio address and directions."
@@ -76,8 +76,8 @@ DEFAULT_PROMPT_EN = """You are the friendly AI assistant for A.H. Studio, Edmont
 ## Contact Information
 - Website: https://allisonhe.ca
 - Contact Page: https://allisonhe.ca/contact
-- Email: hello@ahstudio.com
-- Phone: (780) 555-1234
+- Email: yhe99127@gmail.com
+- Phone: +1 (825) 889-0999
 - Response Time: Within 24-48 hours
 """
 
@@ -119,7 +119,7 @@ DEFAULT_PROMPT_ZH = """您是 A.H. Studio 的友好 AI 助手。A.H. Studio 是�
 - 关于艺术教育的一般问题
 
 ## 必须引导至联系页面的问题
-- **价格**："关于当前价格，请访问我们的联系页面或发送邮件至 hello@ahstudio.com"
+- **价格**："关于当前价格，请访问我们的联系页面或发送邮件至 yhe99127@gmail.com"
 - **时间表**："课程时间因项目而异，请联系我们了解当前时间安排。"
 - **名额/可用性**："名额经常变动，请联系我们查询当前空位。"
 - **具体地址**："我们位于埃德蒙顿，请联系我们获取工作室地址和路线。"
@@ -137,8 +137,8 @@ DEFAULT_PROMPT_ZH = """您是 A.H. Studio 的友好 AI 助手。A.H. Studio 是�
 ## 联系方式
 - 网站：https://allisonhe.ca
 - 联系页面：https://allisonhe.ca/contact
-- 邮箱：hello@ahstudio.com
-- 电话：(780) 555-1234
+- 邮箱：yhe99127@gmail.com
+- 电话：+1 (825) 889-0999
 - 回复时间：24-48小时内
 """
 

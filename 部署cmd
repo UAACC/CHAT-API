@@ -1,4 +1,16 @@
-gcloud run deploy chat-api --project=ah-studio-chat --region=us-central1 --source=. --set-secrets="OPENAI_API_KEY=openai-api-key:latest" --set-secrets="PINECONE_API_KEY=pinecone-api-key:latest" 
+## 部署 (Gemini 免费版)
+## 注意: 用 --update-env-vars / --update-secrets, 不要用 --set-*, 否则 Cloud Run 上已有的 CORS_ORIGINS / PINECONE_INDEX / GCS_BUCKET 会被清掉
+gcloud run deploy chat-api --project=ah-studio-chat --region=us-central1 --source=. --update-env-vars="LLM_PROVIDER=gemini,GEMINI_MODEL=gemini-3.1-flash-lite" --update-secrets="GEMINI_API_KEY=gemini-api-key:latest"
+
+## 第一次用 Gemini 前, 先把 key 存进 Secret Manager (把 YOUR_KEY 换成真实的 key)
+## PowerShell:
+##   Set-Content -Path "$env:TEMP\gemini.txt" -Value "YOUR_KEY" -NoNewline
+##   gcloud secrets create gemini-api-key --project=ah-studio-chat --replication-policy="automatic" --data-file="$env:TEMP\gemini.txt"
+##   gcloud secrets add-iam-policy-binding gemini-api-key --project=ah-studio-chat --member="serviceAccount:204227115712-compute@developer.gserviceaccount.com" --role="roles/secretmanager.secretAccessor"
+##   Remove-Item "$env:TEMP\gemini.txt"
+
+## 旧的 OpenAI 部署命令 (备用)
+## gcloud run deploy chat-api --project=ah-studio-chat --region=us-central1 --source=. --set-env-vars="LLM_PROVIDER=openai" --set-secrets="OPENAI_API_KEY=openai-api-key:latest" --set-secrets="PINECONE_API_KEY=pinecone-api-key:latest"
 
 ##更新文件
 curl.exe -X POST -F "file=@knowledge_base.md" https://chat-api-204227115712.us-central1.run.app/rag/documents/upload

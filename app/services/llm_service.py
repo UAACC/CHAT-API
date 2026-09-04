@@ -57,8 +57,43 @@ def get_llm() -> BaseChatModel:
             streaming=True,
         )
 
+    elif settings.llm_provider == "gemini":
+        if not settings.gemini_api_key:
+            raise RuntimeError("GEMINI_API_KEY environment variable is required")
+
+        from langchain_google_genai import ChatGoogleGenerativeAI
+
+        # Temperature is intentionally left at the model default: Google
+        # recommends against lowering it on Gemini 3+ models.
+        return ChatGoogleGenerativeAI(
+            model=settings.gemini_model,
+            api_key=settings.gemini_api_key,
+            max_tokens=settings.max_tokens,
+        )
+
     else:
         raise ValueError(f"Unsupported LLM provider: {settings.llm_provider}")
+
+
+def chunk_text(chunk) -> str:
+    """
+    Extract plain text from a streamed message chunk.
+
+    Providers may return content as a plain string or as a list of
+    content blocks; only text blocks are forwarded to the client.
+    """
+    content = chunk.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and block.get("type", "text") == "text":
+                parts.append(block.get("text", ""))
+        return "".join(parts)
+    return ""
 
 
 def build_langchain_messages(messages: list[ChatMessage], locale: str) -> list:
@@ -188,8 +223,9 @@ async def generate_response_stream_with_rag(
     logger.info(f"Streaming RAG response for {len(messages)} messages with {len(context_chunks)} context chunks")
 
     async for chunk in llm.astream(langchain_messages):
-        if chunk.content:
-            yield chunk.content
+        text = chunk_text(chunk)
+        if text:
+            yield text
 
 
 async def generate_response(messages: list[ChatMessage], locale: str) -> str:
@@ -232,5 +268,6 @@ async def generate_response_stream(
     logger.info(f"Streaming response for {len(messages)} messages in locale: {locale}")
 
     async for chunk in llm.astream(langchain_messages):
-        if chunk.content:
-            yield chunk.content
+        text = chunk_text(chunk)
+        if text:
+            yield text
