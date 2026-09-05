@@ -196,12 +196,21 @@ async def retrieve_context(query: str, top_k: int, min_score: float) -> list[dic
     Returns:
         List of context chunks with metadata
     """
-    # Query vector store with text (Pinecone handles embedding)
-    matches = await vector_store_service.query_vectors(
-        query_text=query,
-        top_k=top_k,
-        min_score=min_score,
-    )
+    # RAG is optional: deployments without a Pinecone key answer from the
+    # system prompt alone, and a vector store outage must not break chat.
+    if not settings.pinecone_api_key or not query:
+        return []
+
+    try:
+        # Query vector store with text (Pinecone handles embedding)
+        matches = await vector_store_service.query_vectors(
+            query_text=query,
+            top_k=top_k,
+            min_score=min_score,
+        )
+    except Exception as e:
+        logger.warning(f"Context retrieval failed, continuing without RAG: {e}")
+        return []
 
     # Extract context from matches
     context_chunks = []
