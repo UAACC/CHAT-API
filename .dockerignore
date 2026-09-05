@@ -46,3 +46,8 @@ htmlcov/
 # Misc
 .DS_Store
 *.log
+
+# Not needed inside the image
+tests/
+deployments/
+.github/

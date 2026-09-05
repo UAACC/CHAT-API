@@ -1,197 +1,162 @@
 # CHAT-API
 
-Reusable AI-powered chat assistant backend with SSE streaming support.
+[![CI](https://github.com/UAACC/CHAT-API/actions/workflows/ci.yml/badge.svg)](https://github.com/UAACC/CHAT-API/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+
+A drop-in AI assistant backend for websites. Point a chat widget at it, give it
+a system prompt that describes your organisation, and visitors get streamed,
+bilingual answers with guard-rails against made-up prices and runaway costs.
+
+It runs the assistants on [allisonhe.ca](https://allisonhe.ca) (a children's
+art studio) and [orctech.ca](https://orctech.ca) (a technology consultancy)
+from one codebase: one Cloud Run service per site, configured entirely through
+environment variables.
 
 ## Features
 
-- **Multi-provider LLM support**: OpenAI, Anthropic (easily extensible)
-- **SSE streaming**: Real-time token-by-token responses
-- **Bilingual**: English and Chinese system prompts
-- **Cost protection**: Rate limiting, message limits, context truncation
-- **Configurable**: All settings via environment variables
-- **Cloud-ready**: Dockerfile for easy deployment
+- **Streaming replies** over Server-Sent Events, with stop-on-disconnect so an
+  abandoned tab does not keep burning tokens
+- **Pluggable providers**: Google Gemini, OpenAI and Anthropic through
+  LangChain; switch with one variable
+- **Prompt-first configuration**: site knowledge lives in a deployment file,
+  never in code; English and Chinese prompts selected per request
+- **Optional knowledge base**: upload PDFs or Markdown, get retrieval-augmented
+  answers via Pinecone's integrated embeddings; degrades gracefully when absent
+- **Cost protection out of the box**: per-IP rate limiting, input and
+  conversation length limits, context truncation
+- **Small and testable**: FastAPI, ~2k lines, a test suite that runs offline
+  in two seconds, one Dockerfile
 
-## Tech Stack
+## How it works
 
-- **Framework**: FastAPI
-- **LLM Integration**: LangChain
-- **LLM Providers**: OpenAI (default), Anthropic
-- **Streaming**: Server-Sent Events (SSE)
-- **Deployment**: Docker / Google Cloud Run
-
-## Quick Start
-
-### 1. Setup Environment
-
-```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Copy environment template
-cp .env.example .env
-# Edit .env with your API keys
+```mermaid
+flowchart LR
+    W[Chat widget<br/>any frontend] -- "POST /chat/stream<br/>session, history, locale" --> A[CHAT-API<br/>FastAPI on Cloud Run]
+    A -- "rate limit · validate · truncate" --> A
+    A -. "optional: search" .-> P[(Pinecone<br/>knowledge base)]
+    A -- "system prompt + context + history" --> L[LLM provider<br/>Gemini · OpenAI · Anthropic]
+    L -- "token stream" --> A
+    A -- "SSE: token … done" --> W
 ```
 
-### 2. Run Locally
+Every request is checked against the rate limit and size limits, trimmed to
+the last N messages, optionally enriched with retrieved context, and sent to
+the configured model. Tokens are relayed to the browser as they arrive.
+
+## Quick start
 
 ```bash
-# Development mode with auto-reload
+git clone https://github.com/UAACC/CHAT-API.git && cd CHAT-API
+python -m venv venv && source venv/bin/activate      # Windows: venv\Scripts\activate
+pip install -r requirements-dev.txt
+cp .env.example .env                                   # set LLM_PROVIDER and one API key
 uvicorn app.main:app --reload --port 8080
-
-# Or using Python directly
-python -m app.main
 ```
 
-### 3. Test Endpoints
+Then talk to it:
 
 ```bash
-# Health check
-curl http://localhost:8080/health
-
-# Non-streaming chat
-curl -X POST http://localhost:8080/chat \
+curl -N -X POST http://localhost:8080/chat/stream \
   -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "test-123",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "locale": "en"
-  }'
-
-# Streaming chat (SSE)
-curl -X POST http://localhost:8080/chat/stream \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "test-123",
-    "messages": [{"role": "user", "content": "Tell me about yourself"}],
-    "locale": "en"
-  }'
+  -d '{"session_id":"demo","messages":[{"role":"user","content":"What can you help with?"}],"locale":"en"}'
 ```
 
-## API Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check for Cloud Run |
-| `/chat` | POST | Non-streaming chat response |
-| `/chat/stream` | POST | SSE streaming chat response |
-| `/docs` | GET | OpenAPI documentation |
-
-See [CONNECTIONBOOK.md](./CONNECTIONBOOK.md) for detailed frontend integration guide.
-
-## Deployment to Cloud Run
-
-### Prerequisites
-
-- Google Cloud SDK installed
-- Project created with billing enabled
-
-### Deploy
+Or skip Python entirely:
 
 ```bash
-# Set project
-gcloud config set project YOUR_PROJECT_ID
-
-# Enable APIs
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com
-
-# Create secret for API key
-echo -n "sk-your-openai-key" | gcloud secrets create openai-api-key --data-file=-
-
-# Build and deploy
-gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/chat-api
-
-gcloud run deploy chat-api \
-    --image gcr.io/YOUR_PROJECT_ID/chat-api \
-    --platform managed \
-    --region us-central1 \
-    --allow-unauthenticated \
-    --set-env-vars "LLM_PROVIDER=openai,OPENAI_MODEL=gpt-4o-mini,CORS_ORIGINS=https://your-domain.com" \
-    --set-secrets "OPENAI_API_KEY=openai-api-key:latest" \
-    --memory 512Mi \
-    --min-instances 0 \
-    --max-instances 10
-
-# Map custom domain (optional)
-gcloud run domain-mappings create \
-    --service chat-api \
-    --domain api.your-domain.com \
-    --region us-central1
+docker build -t chat-api .
+docker run --rm -p 8080:8080 -e LLM_PROVIDER=gemini -e GEMINI_API_KEY=your-key chat-api
 ```
 
-## Configuration
+Gemini's free tier is enough for a small site; see the
+[operator's guide](docs/guide.md#llm-providers) for model notes.
 
-See `.env.example` for all configuration options.
+## API
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `APP_NAME` | `CHAT-API` | Application name |
-| `LLM_PROVIDER` | `openai` | LLM provider (openai, anthropic) |
-| `OPENAI_API_KEY` | - | OpenAI API key |
-| `OPENAI_MODEL` | `gpt-4o-mini` | OpenAI model name |
-| `MAX_TOKENS` | `512` | Max response tokens |
-| `TEMPERATURE` | `0.7` | Response creativity |
-| `RATE_LIMIT_REQUESTS` | `20` | Requests per window |
-| `RATE_LIMIT_WINDOW` | `60` | Rate limit window (seconds) |
-| `MAX_INPUT_LENGTH` | `500` | Max characters per message |
-| `MAX_MESSAGES_PER_SESSION` | `20` | Max messages in conversation |
-| `MAX_CONTEXT_MESSAGES` | `10` | Messages sent to LLM |
-| `CORS_ORIGINS` | `localhost` | Allowed CORS origins |
-| `SYSTEM_PROMPT_EN` | - | Custom English system prompt |
-| `SYSTEM_PROMPT_ZH` | - | Custom Chinese system prompt |
-| `SYSTEM_PROMPT_FILE` | - | Path to prompts JSON file |
+| Endpoint | Description |
+|----------|-------------|
+| `POST /chat/stream` | Streaming chat (SSE events `token`, `done`, `error`) |
+| `POST /chat` | Same request, single JSON reply |
+| `GET /health` | Liveness and active provider |
+| `POST /rag/documents/upload`, `GET /rag/documents`, `DELETE /rag/documents/{id}` | Knowledge base management |
+| `GET /docs` | Interactive OpenAPI docs |
 
-## Custom System Prompts
-
-### Option 1: Environment Variables
-
-```bash
-SYSTEM_PROMPT_EN="You are a helpful assistant for MyCompany..."
-SYSTEM_PROMPT_ZH="您是MyCompany的AI助手..."
-```
-
-### Option 2: JSON File
-
-```bash
-SYSTEM_PROMPT_FILE=/path/to/prompts.json
-```
+Request body:
 
 ```json
 {
-  "en": "You are a helpful assistant for MyCompany...",
-  "zh": "您是MyCompany的AI助手..."
+  "session_id": "1736789012345-a8b3c9d",
+  "messages": [{ "role": "user", "content": "Do you offer trial classes?" }],
+  "locale": "en",
+  "page_url": "https://example.com/programs"
 }
 ```
 
-## Project Structure
+A complete browser client is ~40 lines; see
+[Frontend integration](docs/guide.md#frontend-integration).
+
+## Configuring a site
+
+1. Copy `deployments/orctech/env.yaml` to `deployments/<site>/env.yaml`.
+2. Write the `SYSTEM_PROMPT_EN` and `SYSTEM_PROMPT_ZH` blocks: who the assistant
+   is, verified facts, what it may answer, what it must hand off to a human.
+3. Set `CORS_ORIGINS` to the site's origins.
+4. Deploy:
+
+```bash
+gcloud run deploy <site>-chat-api --region=us-central1 --source=. --allow-unauthenticated \
+  --env-vars-file=deployments/<site>/env.yaml \
+  --update-secrets="GEMINI_API_KEY=<site>-gemini-api-key:latest"
+```
+
+Details, including secrets and the knowledge base, are in
+[deployments/README.md](deployments/README.md).
+
+## Configuration
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `LLM_PROVIDER` | `openai` | `openai`, `anthropic` or `gemini` |
+| `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | – | Key for the chosen provider |
+| `GEMINI_MODEL` / `OPENAI_MODEL` / `ANTHROPIC_MODEL` | `gemini-3.1-flash-lite` / `gpt-4o-mini` / `claude-3-haiku-20240307` | Model per provider |
+| `SYSTEM_PROMPT_EN`, `SYSTEM_PROMPT_ZH` | generic | Site prompts |
+| `CORS_ORIGINS` | localhost | Allowed origins, comma separated |
+| `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW` | `20` / `60` | Per-IP limit per window (s) |
+| `MAX_INPUT_LENGTH`, `MAX_MESSAGES_PER_SESSION`, `MAX_CONTEXT_MESSAGES` | `500`, `20`, `10` | Size limits |
+| `PINECONE_API_KEY`, `PINECONE_INDEX` | – | Turns on the knowledge base |
+
+Full reference: [docs/guide.md](docs/guide.md#configuration).
+
+## Development
+
+```bash
+pytest                      # 44 tests, no network, ~2 s
+docker build -t chat-api .  # what CI and Cloud Run build
+```
+
+Layout:
 
 ```
-chat-api/
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # FastAPI app
-│   ├── config.py            # Environment config
-│   ├── routes/
-│   │   ├── health.py        # Health endpoint
-│   │   └── chat.py          # Chat endpoints
-│   ├── services/
-│   │   └── llm_service.py   # LangChain integration
-│   ├── models/
-│   │   └── schemas.py       # Pydantic models
-│   ├── middleware/
-│   │   └── rate_limit.py    # Rate limiting
-│   └── prompts/
-│       └── system_prompts.py # System prompts
-├── Dockerfile
-├── requirements.txt
-├── .env.example
-├── CONNECTIONBOOK.md        # Frontend integration guide
-└── README.md
+app/
+  main.py              FastAPI app, CORS, lifespan
+  config.py            all settings (pydantic-settings)
+  routes/              chat, health, rag endpoints
+  services/            llm_service (providers, streaming), vector store, documents, storage
+  middleware/          in-memory rate limiter
+  prompts/             generic default prompts and loader
+deployments/           one folder per site: env.yaml (+ knowledge base source)
+tests/                 pytest suite with a canned LLM
+docs/guide.md          operator's guide
 ```
+
+## Roadmap
+
+- Embeddable widget served by the API (one `<script>` tag)
+- Multi-tenant mode: one service, many sites, keyed by origin
+- Website crawler to build the knowledge base from a URL
+- Provider fallback when the primary model is overloaded
 
 ## License
 
-MIT
+[MIT](LICENSE)

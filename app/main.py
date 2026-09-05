@@ -31,7 +31,10 @@ async def lifespan(app: FastAPI):
     logger.info(f"LLM Provider: {settings.llm_provider}")
     logger.info(f"Environment: {settings.app_env}")
     logger.info(f"CORS Origins: {settings.cors_origins_list}")
-    logger.info(f"RAG Enabled: Pinecone={settings.pinecone_index}, GCS={settings.gcs_bucket}")
+    if settings.pinecone_api_key:
+        logger.info(f"Knowledge base: Pinecone index={settings.pinecone_index}, GCS bucket={settings.gcs_bucket}")
+    else:
+        logger.info("Knowledge base: disabled (no PINECONE_API_KEY), answering from system prompt only")
     yield
     logger.info(f"Shutting down {settings.app_name}")
 

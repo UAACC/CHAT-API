@@ -1,19 +1,14 @@
-# Ignore virtual environment
+# Only the application source is needed to build the container.
 venv/
 .venv/
 __pycache__/
 *.pyc
-
-# Ignore local env files
 .env
-
-# Ignore git
 .git/
-.gitignore
-
-# Ignore docs
+.github/
+tests/
+deployments/
+docs/
 *.md
-
-# Ignore IDE
 .vscode/
 .idea/

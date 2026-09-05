@@ -1,19 +1,21 @@
-# Ignore virtual environment
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
 venv/
 .venv/
-__pycache__/
-*.pyc
 
-# Ignore local env files
+# Local secrets
 .env
+.env.local
 
-# Ignore git
-.git/
-.gitignore
-
-# Ignore docs
-*.md
-
-# Ignore IDE
+# IDE
 .vscode/
 .idea/
+
+# OS
+.DS_Store

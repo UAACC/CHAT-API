@@ -58,14 +58,11 @@ class Settings(BaseSettings):
 
     # RAG - Pinecone Configuration
     pinecone_api_key: str = ""
-    pinecone_index: str = "chat-api-rag-ahstudio"
+    pinecone_index: str = "chat-api-rag"
 
     # RAG - Google Cloud Storage Configuration
     gcs_bucket: str = "chat-api-rag-documents"
     gcs_prefix: str = "documents"
-
-    # RAG - Embedding Configuration
-    embedding_model: str = "text-embedding-3-small"
 
     # RAG - Document Processing
     rag_chunk_size: int = 512

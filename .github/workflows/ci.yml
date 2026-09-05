@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t chat-api:ci .
+      - name: Container starts and answers /health
+        run: |
+          docker run -d --name api -p 8080:8080 \
+            -e LLM_PROVIDER=gemini -e GEMINI_API_KEY=ci-placeholder chat-api:ci
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:8080/health && exit 0
+            sleep 1
+          done
+          docker logs api
+          exit 1
