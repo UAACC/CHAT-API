@@ -2,27 +2,23 @@
 Health check endpoint for Cloud Run and monitoring.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
-from app.models.schemas import HealthResponse
 from app.config import get_settings
+from app.models.schemas import HealthResponse
+from app.tenants import TenantRegistry, get_registry
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health_check() -> HealthResponse:
-    """
-    Health check endpoint.
-
-    Returns service status for Cloud Run health probes
-    and monitoring systems.
-    """
-    settings = get_settings()
+async def health_check(registry: TenantRegistry = Depends(get_registry)) -> HealthResponse:
+    """Service status, default provider and configured tenants."""
     return HealthResponse(
         status="healthy",
         version="1.0.0",
-        provider=settings.llm_provider,
+        provider=registry.default.llm.provider,
+        tenants=registry.ids,
     )
 
 

@@ -49,5 +49,4 @@ htmlcov/
 
 # Not needed inside the image
 tests/
-deployments/
 .github/

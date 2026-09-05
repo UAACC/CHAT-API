@@ -229,6 +229,8 @@ async def process_document(
     filename: str,
     content: bytes,
     content_type: str,
+    namespace: str = "__default__",
+    storage_prefix: Optional[str] = None,
 ) -> dict:
     """
     Process a document: parse, chunk, embed, and store.
@@ -238,6 +240,8 @@ async def process_document(
         filename: Original filename
         content: File content as bytes
         content_type: MIME type of the file
+        namespace: Pinecone namespace of the owning tenant
+        storage_prefix: Storage folder of the owning tenant (default: global prefix)
 
     Returns:
         Processing result with document info and stats
@@ -260,6 +264,7 @@ async def process_document(
         filename=filename,
         content=content,
         content_type=content_type,
+        prefix=storage_prefix,
     )
 
     # Parse document
@@ -286,7 +291,7 @@ async def process_document(
         })
 
     # Upsert to Pinecone (Pinecone handles embedding automatically)
-    upserted_count = await vector_store_service.upsert_records(records)
+    upserted_count = await vector_store_service.upsert_records(records, namespace)
 
     result = {
         "document_id": document_id,
@@ -303,21 +308,27 @@ async def process_document(
     return result
 
 
-async def delete_document(document_id: str) -> dict:
+async def delete_document(
+    document_id: str,
+    namespace: str = "__default__",
+    storage_prefix: Optional[str] = None,
+) -> dict:
     """
     Delete a document and its vectors.
 
     Args:
         document_id: Document ID to delete
+        namespace: Pinecone namespace of the owning tenant
+        storage_prefix: Storage folder of the owning tenant (default: global prefix)
 
     Returns:
         Deletion result
     """
     # Delete vectors from Pinecone
-    await vector_store_service.delete_vectors(document_id)
+    await vector_store_service.delete_vectors(document_id, namespace)
 
     # Delete files from GCS
-    files_deleted = await storage_service.delete_document_files(document_id)
+    files_deleted = await storage_service.delete_document_files(document_id, storage_prefix)
 
     result = {
         "document_id": document_id,

@@ -1,383 +1,206 @@
 """
 Chat endpoints with SSE streaming support.
+
+Every request is resolved to a tenant, rate limited, validated, trimmed to the
+recent history, optionally enriched from the tenant's knowledge base, and
+answered by the tenant's model.
 """
 
 import asyncio
 import logging
+import traceback
+from typing import Optional
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
-from app.models.schemas import ChatRequest, ChatResponse, RAGChatRequest, RAGChatResponse, RAGContext
-from app.services.llm_service import (
-    generate_response,
-    generate_response_stream,
-    generate_response_with_rag,
-    generate_response_stream_with_rag,
+from app.config import Settings, get_settings
+from app.middleware.rate_limit import check_rate_limit
+from app.models.schemas import (
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+    RAGChatRequest,
+    RAGChatResponse,
+    RAGContext,
 )
 from app.services import vector_store_service
-from app.middleware.rate_limit import check_rate_limit
-from app.config import get_settings
+from app.services.llm_service import generate_response, generate_response_stream
+from app.tenants import Tenant, TenantRegistry, get_registry
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-def validate_request(body: ChatRequest) -> None:
+def validate_request(body: ChatRequest, tenant: Tenant, settings: Optional[Settings] = None) -> None:
     """
-    Validate chat request against cost protection limits.
+    Enforce the cost-protection limits.
 
     Raises:
         HTTPException: 400 Bad Request if validation fails
     """
-    # Check message count
+    settings = settings or get_settings()
+
     if len(body.messages) > settings.max_messages_per_session:
         raise HTTPException(
             status_code=400,
             detail=f"Conversation too long. Maximum {settings.max_messages_per_session} messages allowed.",
         )
 
-    # Check last user message length
     user_messages = [m for m in body.messages if m.role == "user"]
     if user_messages:
-        last_message = user_messages[-1].content
-        if len(last_message) > settings.max_input_length:
+        limit = tenant.max_input_length(settings)
+        if len(user_messages[-1].content) > limit:
             raise HTTPException(
                 status_code=400,
-                detail=f"Message too long. Maximum {settings.max_input_length} characters allowed.",
+                detail=f"Message too long. Maximum {limit} characters allowed.",
             )
 
 
-def truncate_messages(messages: list) -> list:
-    """
-    Truncate conversation to only include recent messages.
-    Keeps the last N messages to reduce token usage.
-    """
-    if len(messages) <= settings.max_context_messages:
+def truncate_messages(messages: list, max_context: Optional[int] = None) -> list:
+    """Keep only the most recent messages to bound token usage."""
+    if max_context is None:
+        max_context = get_settings().max_context_messages
+    if len(messages) <= max_context:
         return messages
-
-    # Keep only the last N messages
-    return messages[-settings.max_context_messages:]
+    return messages[-max_context:]
 
 
-@router.post("/stream")
-async def chat_stream(request: Request, body: ChatRequest):
+def last_user_query(messages: list[ChatMessage]) -> str:
+    user_messages = [m for m in messages if m.role == "user"]
+    return user_messages[-1].content if user_messages else ""
+
+
+async def retrieve_context(query: str, tenant: Tenant, top_k: int, min_score: float) -> list[dict]:
     """
-    SSE streaming chat endpoint with RAG support.
+    Retrieve knowledge-base context for a query.
 
-    Automatically retrieves relevant context from the knowledge base.
-
-    Streams tokens as Server-Sent Events:
-    - event: token, data: <text chunk>
-    - event: done (on completion)
-    - event: error, data: <message> (on error)
-
-    The stream automatically stops if the client disconnects,
-    preventing wasted LLM compute.
+    Retrieval is optional: tenants without a knowledge base, deployments
+    without a Pinecone key, and vector-store outages all yield no context
+    rather than an error.
     """
-    # Apply rate limiting
-    check_rate_limit(request)
-
-    # Validate request
-    validate_request(body)
-
-    # Truncate messages to save tokens
-    truncated_messages = truncate_messages(body.messages)
-
-    # Get the last user message for context retrieval
-    user_messages = [m for m in body.messages if m.role == "user"]
-    query = user_messages[-1].content if user_messages else ""
-
-    logger.info(f"Stream request: session={body.session_id}, locale={body.locale}, messages={len(body.messages)}, truncated={len(truncated_messages)}")
-
-    async def event_generator():
-        try:
-            # Retrieve RAG context
-            context_chunks = await retrieve_context(query, settings.rag_default_top_k, settings.rag_min_score_threshold)
-            logger.info(f"Retrieved {len(context_chunks)} context chunks for stream")
-
-            # Stream response with RAG context
-            async for token in generate_response_stream_with_rag(truncated_messages, body.locale, context_chunks):
-                # Check if client disconnected
-                if await request.is_disconnected():
-                    logger.info(f"Client disconnected: session={body.session_id}")
-                    break
-
-                yield {
-                    "event": "token",
-                    "data": token,
-                }
-
-            # Send done event if client still connected
-            if not await request.is_disconnected():
-                yield {
-                    "event": "done",
-                    "data": "",
-                }
-                logger.info(f"Stream complete: session={body.session_id}")
-
-        except asyncio.CancelledError:
-            # Client disconnected, graceful shutdown
-            logger.info(f"Stream cancelled: session={body.session_id}")
-
-        except Exception as e:
-            import traceback
-            logger.error(f"Stream error: session={body.session_id}")
-            logger.error(traceback.format_exc())
-            yield {
-                "event": "error",
-                "data": str(e),
-            }
-
-    return EventSourceResponse(event_generator())
-
-
-@router.post("", response_model=ChatResponse)
-async def chat(request: Request, body: ChatRequest) -> ChatResponse:
-    """
-    Non-streaming chat endpoint with RAG support.
-
-    Automatically retrieves relevant context from the knowledge base.
-    Returns the complete response in a single JSON object.
-    """
-    # Apply rate limiting
-    check_rate_limit(request)
-
-    # Validate request
-    validate_request(body)
-
-    # Truncate messages to save tokens
-    truncated_messages = truncate_messages(body.messages)
-
-    # Get the last user message for context retrieval
-    user_messages = [m for m in body.messages if m.role == "user"]
-    query = user_messages[-1].content if user_messages else ""
-
-    logger.info(f"Chat request: session={body.session_id}, locale={body.locale}, messages={len(body.messages)}, truncated={len(truncated_messages)}")
-
-    try:
-        # Retrieve RAG context
-        context_chunks = await retrieve_context(query, settings.rag_default_top_k, settings.rag_min_score_threshold)
-        logger.info(f"Retrieved {len(context_chunks)} context chunks")
-
-        # Generate response with RAG context
-        reply = await generate_response_with_rag(truncated_messages, body.locale, context_chunks)
-        logger.info(f"Chat complete: session={body.session_id}, reply_length={len(reply)}")
-
-        return ChatResponse(
-            reply=reply,
-            session_id=body.session_id,
-        )
-
-    except Exception as e:
-        import traceback
-        logger.error(f"Chat error: session={body.session_id}")
-        logger.error(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# =============================================================================
-# RAG Chat Endpoints
-# =============================================================================
-
-
-async def retrieve_context(query: str, top_k: int, min_score: float) -> list[dict]:
-    """
-    Retrieve relevant context from vector store for a query.
-    Uses Pinecone's integrated embeddings for text-based search.
-
-    Args:
-        query: User query text
-        top_k: Number of results to retrieve
-        min_score: Minimum similarity score threshold
-
-    Returns:
-        List of context chunks with metadata
-    """
-    # RAG is optional: deployments without a Pinecone key answer from the
-    # system prompt alone, and a vector store outage must not break chat.
-    if not settings.pinecone_api_key or not query:
+    settings = get_settings()
+    if not tenant.knowledge_base or not settings.pinecone_api_key or not query:
         return []
 
     try:
-        # Query vector store with text (Pinecone handles embedding)
         matches = await vector_store_service.query_vectors(
             query_text=query,
             top_k=top_k,
             min_score=min_score,
+            namespace=tenant.knowledge_base.namespace,
         )
     except Exception as e:
         logger.warning(f"Context retrieval failed, continuing without RAG: {e}")
         return []
 
-    # Extract context from matches
-    context_chunks = []
-    for match in matches:
-        metadata = match.get("metadata", {})
-        context_chunks.append({
-            "document_id": metadata.get("document_id", ""),
-            "filename": metadata.get("filename", ""),
-            "text": metadata.get("text", ""),
-            "score": match.get("score", 0.0),
-        })
-
-    return context_chunks
+    return [
+        {
+            "document_id": m.get("metadata", {}).get("document_id", ""),
+            "filename": m.get("metadata", {}).get("filename", ""),
+            "text": m.get("metadata", {}).get("text", ""),
+            "score": m.get("score", 0.0),
+        }
+        for m in matches
+    ]
 
 
-@router.post("/rag/stream")
-async def chat_rag_stream(request: Request, body: RAGChatRequest):
-    """
-    SSE streaming chat endpoint with RAG context retrieval.
+def _prepare(request: Request, body: ChatRequest, registry: TenantRegistry) -> tuple[Tenant, list[ChatMessage], str]:
+    """Shared front half of every chat endpoint."""
+    tenant = registry.resolve(request, body.site)
+    check_rate_limit(request, tenant)
+    validate_request(body, tenant)
+    truncated = truncate_messages(body.messages)
+    logger.info(
+        f"Chat request: tenant={tenant.id}, session={body.session_id}, locale={body.locale}, "
+        f"messages={len(body.messages)}, truncated={len(truncated)}"
+    )
+    return tenant, truncated, last_user_query(body.messages)
 
-    First retrieves relevant context from the vector store,
-    then streams the LLM response with context injected.
 
-    Streams tokens as Server-Sent Events:
-    - event: context, data: <JSON array of retrieved context>
-    - event: token, data: <text chunk>
-    - event: done (on completion)
-    - event: error, data: <message> (on error)
-    """
-    # Apply rate limiting
-    check_rate_limit(request)
-
-    # Validate request (reuse existing validation)
-    validate_request(ChatRequest(
-        session_id=body.session_id,
-        messages=body.messages,
-        page_url=body.page_url,
-        locale=body.locale,
-    ))
-
-    # Truncate messages to save tokens
-    truncated_messages = truncate_messages(body.messages)
-
-    # Get the last user message for context retrieval
-    user_messages = [m for m in body.messages if m.role == "user"]
-    query = user_messages[-1].content if user_messages else ""
-
-    logger.info(f"RAG stream request: session={body.session_id}, locale={body.locale}, messages={len(body.messages)}")
+def _sse_response(request: Request, tenant: Tenant, body: ChatRequest, messages: list[ChatMessage],
+                  query: str, top_k: int, min_score: float) -> EventSourceResponse:
+    """Stream tokens as SSE, stopping early if the client goes away."""
 
     async def event_generator():
         try:
-            # Retrieve context
-            context_chunks = await retrieve_context(query, body.top_k, body.min_score)
+            context_chunks = await retrieve_context(query, tenant, top_k, min_score)
+            logger.info(f"Retrieved {len(context_chunks)} context chunks for stream")
 
-            # Send context event
-            import json
-            context_data = [
-                {
-                    "document_id": c["document_id"],
-                    "filename": c["filename"],
-                    "text": c["text"][:500],  # Truncate for event
-                    "score": round(c["score"], 4),
-                }
-                for c in context_chunks
-            ]
-            yield {
-                "event": "context",
-                "data": json.dumps(context_data),
-            }
-
-            # Stream response with RAG context
-            async for token in generate_response_stream_with_rag(
-                truncated_messages, body.locale, context_chunks
-            ):
-                # Check if client disconnected
+            async for token in generate_response_stream(messages, body.locale, tenant, context_chunks):
                 if await request.is_disconnected():
                     logger.info(f"Client disconnected: session={body.session_id}")
                     break
+                yield {"event": "token", "data": token}
 
-                yield {
-                    "event": "token",
-                    "data": token,
-                }
-
-            # Send done event if client still connected
             if not await request.is_disconnected():
-                yield {
-                    "event": "done",
-                    "data": "",
-                }
-                logger.info(f"RAG stream complete: session={body.session_id}")
+                yield {"event": "done", "data": ""}
+                logger.info(f"Stream complete: session={body.session_id}")
 
         except asyncio.CancelledError:
-            logger.info(f"RAG stream cancelled: session={body.session_id}")
+            logger.info(f"Stream cancelled: session={body.session_id}")
 
         except Exception as e:
-            import traceback
-            logger.error(f"RAG stream error: session={body.session_id}")
-            logger.error(traceback.format_exc())
-            yield {
-                "event": "error",
-                "data": str(e),
-            }
+            logger.error(f"Stream error: session={body.session_id}\n{traceback.format_exc()}")
+            yield {"event": "error", "data": str(e)}
 
     return EventSourceResponse(event_generator())
 
 
-@router.post("/rag", response_model=RAGChatResponse)
-async def chat_rag(request: Request, body: RAGChatRequest) -> RAGChatResponse:
+@router.post("/stream")
+async def chat_stream(request: Request, body: ChatRequest, registry: TenantRegistry = Depends(get_registry)):
     """
-    Non-streaming RAG chat endpoint.
+    SSE streaming chat endpoint.
 
-    Retrieves relevant context from the vector store,
-    then generates a response with context injected.
-
-    Returns the complete response along with retrieved context.
+    Events: `token` (text chunk), `done` (completion), `error` (message).
+    The stream stops if the client disconnects, so abandoned tabs do not
+    keep consuming model output.
     """
-    # Apply rate limiting
-    check_rate_limit(request)
+    tenant, messages, query = _prepare(request, body, registry)
+    settings = get_settings()
+    return _sse_response(request, tenant, body, messages, query,
+                         settings.rag_default_top_k, settings.rag_min_score_threshold)
 
-    # Validate request
-    validate_request(ChatRequest(
-        session_id=body.session_id,
-        messages=body.messages,
-        page_url=body.page_url,
-        locale=body.locale,
-    ))
 
-    # Truncate messages to save tokens
-    truncated_messages = truncate_messages(body.messages)
-
-    # Get the last user message for context retrieval
-    user_messages = [m for m in body.messages if m.role == "user"]
-    query = user_messages[-1].content if user_messages else ""
-
-    logger.info(f"RAG chat request: session={body.session_id}, locale={body.locale}, messages={len(body.messages)}")
+@router.post("", response_model=ChatResponse)
+async def chat(request: Request, body: ChatRequest, registry: TenantRegistry = Depends(get_registry)) -> ChatResponse:
+    """Non-streaming chat endpoint: the complete reply in one JSON body."""
+    tenant, messages, query = _prepare(request, body, registry)
+    settings = get_settings()
 
     try:
-        # Retrieve context
-        context_chunks = await retrieve_context(query, body.top_k, body.min_score)
+        context_chunks = await retrieve_context(query, tenant, settings.rag_default_top_k, settings.rag_min_score_threshold)
+        reply = await generate_response(messages, body.locale, tenant, context_chunks)
+        logger.info(f"Chat complete: session={body.session_id}, reply_length={len(reply)}")
+        return ChatResponse(reply=reply, session_id=body.session_id)
 
-        # Generate response with RAG context
-        reply = await generate_response_with_rag(
-            truncated_messages, body.locale, context_chunks
-        )
+    except Exception as e:
+        logger.error(f"Chat error: session={body.session_id}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-        logger.info(f"RAG chat complete: session={body.session_id}, reply_length={len(reply)}, context_count={len(context_chunks)}")
 
-        # Build response with context
-        context_response = [
-            RAGContext(
-                document_id=c["document_id"],
-                filename=c["filename"],
-                text=c["text"],
-                score=c["score"],
-            )
-            for c in context_chunks
-        ]
+@router.post("/rag/stream")
+async def chat_rag_stream(request: Request, body: RAGChatRequest, registry: TenantRegistry = Depends(get_registry)):
+    """Streaming chat with caller-controlled retrieval depth (`top_k`, `min_score`)."""
+    tenant, messages, query = _prepare(request, body, registry)
+    return _sse_response(request, tenant, body, messages, query, body.top_k, body.min_score)
 
+
+@router.post("/rag", response_model=RAGChatResponse)
+async def chat_rag(request: Request, body: RAGChatRequest, registry: TenantRegistry = Depends(get_registry)) -> RAGChatResponse:
+    """Non-streaming chat that also returns the retrieved context."""
+    tenant, messages, query = _prepare(request, body, registry)
+
+    try:
+        context_chunks = await retrieve_context(query, tenant, body.top_k, body.min_score)
+        reply = await generate_response(messages, body.locale, tenant, context_chunks)
         return RAGChatResponse(
             reply=reply,
             session_id=body.session_id,
-            context=context_response,
+            context=[RAGContext(**c) for c in context_chunks],
         )
 
     except Exception as e:
-        import traceback
-        logger.error(f"RAG chat error: session={body.session_id}")
-        logger.error(traceback.format_exc())
+        logger.error(f"RAG chat error: session={body.session_id}\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))

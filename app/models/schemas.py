@@ -16,6 +16,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     """Request body for chat endpoints."""
 
+    site: Optional[str] = Field(None, description="Tenant id; normally inferred from the Origin header")
     session_id: str = Field(..., description="Unique session identifier from client")
     messages: list[ChatMessage] = Field(..., description="Conversation history")
     page_url: str = Field("", description="Current page URL for context")
@@ -34,7 +35,8 @@ class HealthResponse(BaseModel):
 
     status: str = "healthy"
     version: str = "1.0.0"
-    provider: str = Field(..., description="Current LLM provider")
+    provider: str = Field(..., description="LLM provider of the default tenant")
+    tenants: list[str] = Field(default_factory=list, description="Configured tenant ids")
 
 
 # =============================================================================
@@ -90,13 +92,9 @@ class DocumentDeleteResponse(BaseModel):
     message: str = Field(default="Document deleted successfully")
 
 
-class RAGChatRequest(BaseModel):
-    """Request body for RAG chat endpoints."""
+class RAGChatRequest(ChatRequest):
+    """Chat request with caller-controlled retrieval depth."""
 
-    session_id: str = Field(..., description="Unique session identifier from client")
-    messages: list[ChatMessage] = Field(..., description="Conversation history")
-    page_url: str = Field("", description="Current page URL for context")
-    locale: Literal["en", "zh"] = Field("en", description="Response language preference")
     top_k: int = Field(5, description="Number of context chunks to retrieve", ge=1, le=20)
     min_score: float = Field(0.1, description="Minimum similarity score", ge=0.0, le=1.0)
 

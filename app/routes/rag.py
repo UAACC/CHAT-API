@@ -1,9 +1,16 @@
 """
-RAG document management endpoints.
+Knowledge-base document management endpoints.
+
+Documents belong to a tenant: they are stored under the tenant's storage
+prefix and indexed in the tenant's Pinecone namespace. The tenant is chosen
+with the `site` query parameter, or inferred from the Origin header, or the
+default tenant.
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
 from app.models.schemas import (
     DocumentUploadResponse,
@@ -19,52 +26,57 @@ from app.services import (
     storage_service,
     vector_store_service,
 )
-from app.config import get_settings
+from app.tenants import KnowledgeBaseConfig, Tenant, TenantRegistry, get_registry
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 
 
+def knowledge_base_for(
+    request: Request,
+    site: Optional[str] = Query(None, description="Tenant id; inferred from Origin when omitted"),
+    registry: TenantRegistry = Depends(get_registry),
+) -> tuple[Tenant, KnowledgeBaseConfig]:
+    """Resolve the tenant and require it to have a knowledge base."""
+    tenant = registry.resolve(request, site)
+    if tenant.knowledge_base is None:
+        raise HTTPException(status_code=400, detail=f"Site {tenant.id!r} has no knowledge base configured")
+    return tenant, tenant.knowledge_base
+
+
 @router.post("/documents/upload", response_model=DocumentUploadResponse)
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(
+    file: UploadFile = File(...),
+    kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for),
+):
     """
-    Upload and process a document for RAG.
+    Upload and index a document (PDF, TXT or Markdown).
 
-    Accepts PDF, TXT, and Markdown files.
-    The document will be:
-    1. Stored in Google Cloud Storage
-    2. Parsed and chunked
-    3. Embedded and stored in Pinecone
-
-    If a document with the same filename exists, it will be replaced.
-    Maximum file size is configurable via RAG_MAX_FILE_SIZE_MB.
+    The file is stored, parsed, chunked and embedded. An existing document
+    with the same filename for this site is replaced. Maximum size is
+    RAG_MAX_FILE_SIZE_MB.
     """
+    tenant, config = kb
+
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
 
-    # Read file content
     content = await file.read()
-
     if not content:
         raise HTTPException(status_code=400, detail="File is empty")
 
-    # Check for existing document with same filename and delete it
     try:
-        existing_docs = await storage_service.list_documents()
+        existing_docs = await storage_service.list_documents(config.storage_prefix)
         for doc in existing_docs:
             if doc.get("filename") == file.filename:
-                logger.info(f"Found existing document with same filename: {doc['id']}, deleting...")
-                await document_service.delete_document(doc["id"])
-                logger.info(f"Deleted existing document: {doc['id']}")
+                logger.info(f"Replacing existing document {doc['id']} for {tenant.id}")
+                await document_service.delete_document(doc["id"], config.namespace, config.storage_prefix)
     except Exception as e:
         logger.warning(f"Error checking for existing documents: {e}")
 
-    # Generate document ID
     document_id = document_service.generate_document_id()
-
-    logger.info(f"Processing upload: {file.filename} ({len(content)} bytes)")
+    logger.info(f"Processing upload for {tenant.id}: {file.filename} ({len(content)} bytes)")
 
     try:
         result = await document_service.process_document(
@@ -72,8 +84,9 @@ async def upload_document(file: UploadFile = File(...)):
             filename=file.filename,
             content=content,
             content_type=file.content_type or "application/octet-stream",
+            namespace=config.namespace,
+            storage_prefix=config.storage_prefix,
         )
-
         return DocumentUploadResponse(
             document_id=result["document_id"],
             filename=result["filename"],
@@ -92,19 +105,14 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 @router.get("/documents", response_model=DocumentListResponse)
-async def list_documents():
-    """
-    List all uploaded documents.
-
-    Returns document metadata including filename, size, and vector count.
-    """
+async def list_documents(kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for)):
+    """List the site's indexed documents."""
+    _, config = kb
     try:
-        docs = await storage_service.list_documents()
-
-        # Enrich with vector counts
+        docs = await storage_service.list_documents(config.storage_prefix)
         document_infos = []
         for doc in docs:
-            vector_count = await vector_store_service.get_document_vector_count(doc["id"])
+            vector_count = await vector_store_service.get_document_vector_count(doc["id"], config.namespace)
             document_infos.append(
                 DocumentInfo(
                     id=doc["id"],
@@ -115,11 +123,7 @@ async def list_documents():
                     vector_count=vector_count,
                 )
             )
-
-        return DocumentListResponse(
-            documents=document_infos,
-            total=len(document_infos),
-        )
+        return DocumentListResponse(documents=document_infos, total=len(document_infos))
 
     except Exception as e:
         logger.error(f"Error listing documents: {e}")
@@ -127,20 +131,15 @@ async def list_documents():
 
 
 @router.get("/documents/{document_id}", response_model=DocumentDetailResponse)
-async def get_document(document_id: str):
-    """
-    Get details of a specific document.
-
-    Returns full document metadata including GCS URI and vector count.
-    """
+async def get_document(document_id: str, kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for)):
+    """Details for one document, including its storage URI and vector count."""
+    _, config = kb
     try:
-        doc = await storage_service.get_document_info(document_id)
-
+        doc = await storage_service.get_document_info(document_id, config.storage_prefix)
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
 
-        vector_count = await vector_store_service.get_document_vector_count(document_id)
-
+        vector_count = await vector_store_service.get_document_vector_count(document_id, config.namespace)
         return DocumentDetailResponse(
             id=doc["id"],
             filename=doc["filename"],
@@ -153,35 +152,25 @@ async def get_document(document_id: str):
 
     except HTTPException:
         raise
-
     except Exception as e:
         logger.error(f"Error getting document {document_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get document: {str(e)}")
 
 
 @router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
-async def delete_document(document_id: str):
-    """
-    Delete a document and all its associated data.
-
-    Removes:
-    - Original file from GCS
-    - All vectors from Pinecone
-    """
+async def delete_document(document_id: str, kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for)):
+    """Remove a document: its stored file and all of its vectors."""
+    _, config = kb
     try:
-        # Check if document exists
-        doc = await storage_service.get_document_info(document_id)
+        doc = await storage_service.get_document_info(document_id, config.storage_prefix)
         if not doc:
             raise HTTPException(status_code=404, detail="Document not found")
 
-        # Delete document
-        await document_service.delete_document(document_id)
-
+        await document_service.delete_document(document_id, config.namespace, config.storage_prefix)
         return DocumentDeleteResponse(document_id=document_id)
 
     except HTTPException:
         raise
-
     except Exception as e:
         logger.error(f"Error deleting document {document_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
@@ -189,17 +178,10 @@ async def delete_document(document_id: str):
 
 @router.get("/status", response_model=RAGStatusResponse)
 async def get_rag_status():
-    """
-    Check RAG system health.
-
-    Returns status of:
-    - Google Cloud Storage
-    - Pinecone vector store (with integrated embeddings)
-    """
+    """Connectivity of the storage bucket and the vector store."""
     storage_status = storage_service.check_storage_health()
     vector_status = vector_store_service.check_vector_store_health()
 
-    # Determine overall status
     all_healthy = (
         storage_status.get("status") == "healthy"
         and vector_status.get("status") == "healthy"
@@ -207,16 +189,7 @@ async def get_rag_status():
 
     return RAGStatusResponse(
         status="healthy" if all_healthy else "degraded",
-        storage=RAGServiceStatus(
-            status=storage_status.get("status", "unknown"),
-            error=storage_status.get("error"),
-        ),
-        vector_store=RAGServiceStatus(
-            status=vector_status.get("status", "unknown"),
-            error=vector_status.get("error"),
-        ),
-        embedding=RAGServiceStatus(
-            status="integrated",  # Embeddings handled by Pinecone
-            error=None,
-        ),
+        storage=RAGServiceStatus(status=storage_status.get("status", "unknown"), error=storage_status.get("error")),
+        vector_store=RAGServiceStatus(status=vector_status.get("status", "unknown"), error=vector_status.get("error")),
+        embedding=RAGServiceStatus(status="integrated", error=None),
     )

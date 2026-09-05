@@ -18,6 +18,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY app/ ./app/
+COPY deployments/ ./deployments/
 
 # Cloud Run uses PORT environment variable
 ENV PORT=8080

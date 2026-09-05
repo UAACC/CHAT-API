@@ -4,6 +4,7 @@ Everything you need to configure, integrate, run and deploy CHAT-API. The
 README covers the five-minute version; this document is the reference.
 
 - [Configuration](#configuration)
+- [Multi-tenant mode](#multi-tenant-mode)
 - [System prompts](#system-prompts)
 - [LLM providers](#llm-providers)
 - [Cost controls](#cost-controls)
@@ -21,7 +22,8 @@ definition (see `deployments/`).
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `LLM_PROVIDER` | `openai` | `openai`, `anthropic` or `gemini` |
+| `TENANTS_FILE` | – | Path to a tenants YAML file; enables [multi-tenant mode](#multi-tenant-mode) |
+| `LLM_PROVIDER` | `openai` | `openai`, `anthropic` or `gemini` (single-tenant mode) |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | – / `gpt-4o-mini` | OpenAI credentials and model |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` | – / `claude-3-haiku-20240307` | Anthropic credentials and model |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | – / `gemini-3.1-flash-lite` | Google Gemini credentials and model |
@@ -38,6 +40,54 @@ definition (see `deployments/`).
 | `GCS_BUCKET` / `GCS_PREFIX` | `chat-api-rag-documents` / `documents` | Where uploaded source documents are kept |
 | `RAG_DEFAULT_TOP_K` / `RAG_MIN_SCORE_THRESHOLD` | `5` / `0.1` | Retrieval depth and cut-off |
 | `APP_NAME`, `APP_ENV`, `LOG_LEVEL`, `PORT` | – | Housekeeping |
+
+## Multi-tenant mode
+
+Set `TENANTS_FILE` to serve several websites from one deployment. Each tenant
+has its own origins, model, prompts, optional knowledge-base namespace and
+limit overrides:
+
+```yaml
+default: studio
+tenants:
+  studio:
+    name: Art Studio
+    origins: [https://studio.example, https://www.studio.example]
+    llm: { provider: gemini, model: gemini-3.1-flash-lite, api_key_env: STUDIO_GEMINI_API_KEY }
+    prompts:
+      en: |
+        You are the Studio assistant ...
+      zh: |
+        您是工作室助手 ...
+    knowledge_base: { namespace: studio }
+    limits: { rate_limit_requests: 30, max_input_length: 800 }
+  consultancy:
+    origins: [https://consultancy.example]
+    llm: { provider: openai, model: gpt-4o-mini, api_key_env: CONSULTANCY_OPENAI_API_KEY }
+    prompts: { en: "You are the Consultancy assistant ..." }
+```
+
+How a request finds its tenant:
+
+1. `site` in the JSON body (chat) or `?site=` (knowledge-base endpoints).
+   Unknown id → `404`.
+2. Otherwise the `Origin` header, matched against every tenant's origins.
+   An origin nobody claims → `403`. Browsers always send `Origin` on
+   cross-site requests, so widgets need no configuration.
+3. Otherwise the `default` tenant (server-to-server calls, curl).
+
+What is per tenant: prompts, provider and model, API key (named by
+`api_key_env`, filled from the environment), `rate_limit_requests`,
+`max_input_length`, Pinecone namespace and storage folder. What stays shared:
+the Pinecone index and bucket, the rate-limit window, conversation and context
+limits, logging. The CORS allow-list is the union of all tenant origins.
+
+Startup validates the file: unknown providers, an origin claimed twice, a
+missing default, or an empty key variable stop the container before it serves
+traffic, so mistakes surface at deploy time.
+
+Without `TENANTS_FILE` the service builds one implicit tenant from the plain
+variables, which is the mode the rest of this guide describes.
 
 ## System prompts
 
@@ -129,7 +179,8 @@ space after `data:`; a token consisting of a single space is legitimate.
 
 Send the full history each time (the server truncates), generate a fresh
 `session_id` when the visitor starts over, and never include `system`
-messages: the server drops them.
+messages: the server drops them. In multi-tenant mode the browser's `Origin`
+selects the site; add `"site": "<id>"` only for non-browser callers.
 
 ### Minimal browser client
 
@@ -204,6 +255,9 @@ API) and prepends the best chunks to the system prompt inside a
 `<retrieved_context>` block. Source files are kept in Google Cloud Storage so
 they can be listed and deleted later. If retrieval fails the request continues
 without context and a warning is logged.
+
+All document endpoints take an optional `?site=<id>` (or infer the tenant
+from `Origin`); a tenant without a `knowledge_base` block gets `400`.
 
 | Endpoint | Purpose |
 |----------|---------|

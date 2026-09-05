@@ -1,10 +1,12 @@
 """
-Google Cloud Storage service for file operations.
+Google Cloud Storage service for document files.
+
+Every function takes an optional `prefix` (the tenant's storage folder);
+when omitted the global GCS_PREFIX is used, which is the single-tenant layout.
 """
 
 import logging
 from typing import Optional
-from datetime import datetime
 
 from google.cloud import storage
 from google.cloud.exceptions import NotFound
@@ -26,10 +28,13 @@ def get_bucket() -> storage.Bucket:
     return client.bucket(settings.gcs_bucket)
 
 
-def build_blob_path(document_id: str, filename: str) -> str:
+def resolve_prefix(prefix: Optional[str]) -> str:
+    return (prefix or get_settings().gcs_prefix).strip("/")
+
+
+def build_blob_path(document_id: str, filename: str, prefix: Optional[str] = None) -> str:
     """Build the full blob path for a document."""
-    settings = get_settings()
-    return f"{settings.gcs_prefix}/{document_id}/original/{filename}"
+    return f"{resolve_prefix(prefix)}/{document_id}/original/{filename}"
 
 
 async def upload_file(
@@ -37,45 +42,30 @@ async def upload_file(
     filename: str,
     content: bytes,
     content_type: str,
+    prefix: Optional[str] = None,
 ) -> str:
     """
     Upload a file to GCS.
-
-    Args:
-        document_id: Unique document identifier
-        filename: Original filename
-        content: File content as bytes
-        content_type: MIME type of the file
 
     Returns:
         GCS URI of the uploaded file (gs://bucket/path)
     """
     settings = get_settings()
     bucket = get_bucket()
-    blob_path = build_blob_path(document_id, filename)
+    blob_path = build_blob_path(document_id, filename, prefix)
     blob = bucket.blob(blob_path)
 
     blob.upload_from_string(content, content_type=content_type)
 
     gcs_uri = f"gs://{settings.gcs_bucket}/{blob_path}"
     logger.info(f"Uploaded file to {gcs_uri}")
-
     return gcs_uri
 
 
-async def download_file(document_id: str, filename: str) -> Optional[bytes]:
-    """
-    Download a file from GCS.
-
-    Args:
-        document_id: Unique document identifier
-        filename: Original filename
-
-    Returns:
-        File content as bytes, or None if not found
-    """
+async def download_file(document_id: str, filename: str, prefix: Optional[str] = None) -> Optional[bytes]:
+    """Download a file from GCS, or None if it does not exist."""
     bucket = get_bucket()
-    blob_path = build_blob_path(document_id, filename)
+    blob_path = build_blob_path(document_id, filename, prefix)
     blob = bucket.blob(blob_path)
 
     try:
@@ -87,55 +77,35 @@ async def download_file(document_id: str, filename: str) -> Optional[bytes]:
         return None
 
 
-async def delete_document_files(document_id: str) -> int:
-    """
-    Delete all files for a document from GCS.
-
-    Args:
-        document_id: Unique document identifier
-
-    Returns:
-        Number of files deleted
-    """
-    settings = get_settings()
+async def delete_document_files(document_id: str, prefix: Optional[str] = None) -> int:
+    """Delete all files for a document. Returns the number deleted."""
     bucket = get_bucket()
-    prefix = f"{settings.gcs_prefix}/{document_id}/"
+    folder = f"{resolve_prefix(prefix)}/{document_id}/"
 
-    blobs = list(bucket.list_blobs(prefix=prefix))
     deleted_count = 0
-
-    for blob in blobs:
+    for blob in list(bucket.list_blobs(prefix=folder)):
         blob.delete()
         deleted_count += 1
         logger.info(f"Deleted file: {blob.name}")
-
     return deleted_count
 
 
-async def list_documents() -> list[dict]:
-    """
-    List all document folders in GCS.
-
-    Returns:
-        List of document info dictionaries with id and metadata
-    """
-    settings = get_settings()
+async def list_documents(prefix: Optional[str] = None) -> list[dict]:
+    """List the documents stored under a prefix."""
     bucket = get_bucket()
-    prefix = f"{settings.gcs_prefix}/"
+    folder = f"{resolve_prefix(prefix)}/"
+    depth = folder.count("/")  # segments before the document id
 
-    # Get all blobs and extract unique document IDs
-    blobs = bucket.list_blobs(prefix=prefix)
     documents = {}
-
-    for blob in blobs:
-        # Extract document_id from path: documents/{document_id}/original/{filename}
+    for blob in bucket.list_blobs(prefix=folder):
+        # <prefix>/{document_id}/original/{filename}
         parts = blob.name.split("/")
-        if len(parts) >= 4 and parts[2] == "original":
-            doc_id = parts[1]
+        if len(parts) >= depth + 3 and parts[depth + 1] == "original":
+            doc_id = parts[depth]
             if doc_id not in documents:
                 documents[doc_id] = {
                     "id": doc_id,
-                    "filename": parts[3],
+                    "filename": parts[depth + 2],
                     "size": blob.size,
                     "created_at": blob.time_created.isoformat() if blob.time_created else None,
                     "content_type": blob.content_type,
@@ -144,22 +114,13 @@ async def list_documents() -> list[dict]:
     return list(documents.values())
 
 
-async def get_document_info(document_id: str) -> Optional[dict]:
-    """
-    Get information about a specific document.
-
-    Args:
-        document_id: Unique document identifier
-
-    Returns:
-        Document info dictionary or None if not found
-    """
+async def get_document_info(document_id: str, prefix: Optional[str] = None) -> Optional[dict]:
+    """Metadata for one document, or None if not found."""
     settings = get_settings()
     bucket = get_bucket()
-    prefix = f"{settings.gcs_prefix}/{document_id}/original/"
+    folder = f"{resolve_prefix(prefix)}/{document_id}/original/"
 
-    blobs = list(bucket.list_blobs(prefix=prefix))
-
+    blobs = list(bucket.list_blobs(prefix=folder))
     if not blobs:
         return None
 
@@ -175,25 +136,12 @@ async def get_document_info(document_id: str) -> Optional[dict]:
 
 
 def check_storage_health() -> dict:
-    """
-    Check GCS connectivity and bucket access.
-
-    Returns:
-        Health status dictionary
-    """
+    """Check GCS connectivity and bucket access."""
     settings = get_settings()
     try:
         bucket = get_bucket()
-        # Try to check if bucket exists
         bucket.reload()
-        return {
-            "status": "healthy",
-            "bucket": settings.gcs_bucket,
-        }
+        return {"status": "healthy", "bucket": settings.gcs_bucket}
     except Exception as e:
         logger.error(f"GCS health check failed: {e}")
-        return {
-            "status": "unhealthy",
-            "bucket": settings.gcs_bucket,
-            "error": str(e),
-        }
+        return {"status": "unhealthy", "bucket": settings.gcs_bucket, "error": str(e)}

@@ -3,32 +3,28 @@
 import pytest
 from langchain_core.messages import AIMessageChunk, HumanMessage, SystemMessage, AIMessage
 
-from app.config import Settings
 from app.models.schemas import ChatMessage
 from app.services import llm_service
 from app.services.llm_service import (
     build_langchain_messages,
-    build_langchain_messages_with_rag,
+    build_llm,
+    build_system_prompt,
     chunk_text,
     get_llm,
 )
+from app.tenants import LlmConfig, Tenant
 
 
-def _settings(**overrides) -> Settings:
-    base = {
-        "llm_provider": "openai",
-        "openai_api_key": "",
-        "anthropic_api_key": "",
-        "gemini_api_key": "",
-        "max_tokens": 256,
-        "temperature": 0.5,
-    }
-    base.update(overrides)
-    return Settings(**base)
-
-
-def _use(monkeypatch, settings: Settings):
-    monkeypatch.setattr(llm_service, "get_settings", lambda: settings)
+def _tenant(**llm_overrides) -> Tenant:
+    llm = {"provider": "openai", "model": "gpt-4o-mini", "api_key": "sk-test"}
+    llm.update(llm_overrides)
+    return Tenant(
+        id="t1",
+        name="Tenant One",
+        origins=["https://one.example"],
+        llm=LlmConfig(**llm),
+        prompts={"en": "EN prompt for one", "zh": "ZH prompt for one"},
+    )
 
 
 class TestChunkText:
@@ -54,44 +50,59 @@ class TestChunkText:
         assert chunk_text(AIMessageChunk(content=[{"text": "x"}])) == "x"
 
 
-class TestGetLlm:
-    def test_openai(self, monkeypatch):
-        _use(monkeypatch, _settings(openai_api_key="sk-test", openai_model="gpt-4o-mini"))
+class TestBuildLlm:
+    def test_openai(self):
         from langchain_openai import ChatOpenAI
 
-        llm = get_llm()
+        llm = build_llm(LlmConfig(provider="openai", model="gpt-4o-mini", api_key="sk-test"))
         assert isinstance(llm, ChatOpenAI)
         assert llm.model_name == "gpt-4o-mini"
 
-    def test_anthropic(self, monkeypatch):
-        _use(monkeypatch, _settings(llm_provider="anthropic", anthropic_api_key="sk-ant-test"))
+    def test_anthropic(self):
         from langchain_anthropic import ChatAnthropic
 
-        assert isinstance(get_llm(), ChatAnthropic)
+        llm = build_llm(LlmConfig(provider="anthropic", model="claude-3-haiku-20240307", api_key="sk-ant"))
+        assert isinstance(llm, ChatAnthropic)
 
-    def test_gemini(self, monkeypatch):
-        _use(monkeypatch, _settings(llm_provider="gemini", gemini_api_key="AIza-test", gemini_model="gemini-3.1-flash-lite"))
+    def test_gemini(self):
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        llm = get_llm()
+        llm = build_llm(LlmConfig(provider="gemini", model="gemini-3.1-flash-lite", api_key="AIza"))
         assert isinstance(llm, ChatGoogleGenerativeAI)
         assert "gemini-3.1-flash-lite" in llm.model
 
-    @pytest.mark.parametrize(
-        "provider,env_name",
-        [("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY"), ("gemini", "GEMINI_API_KEY")],
-    )
-    def test_missing_key_is_a_clear_error(self, monkeypatch, provider, env_name):
-        _use(monkeypatch, _settings(llm_provider=provider))
-        with pytest.raises(RuntimeError, match=env_name):
-            get_llm()
+    @pytest.mark.parametrize("provider", ["openai", "anthropic", "gemini"])
+    def test_missing_key_names_the_variable(self, provider):
+        config = LlmConfig(provider=provider, model="m", api_key_env="MY_SECRET")
+        with pytest.raises(RuntimeError, match="MY_SECRET"):
+            build_llm(config)
 
-    def test_unknown_provider(self, monkeypatch):
-        settings = _settings(openai_api_key="x")
-        object.__setattr__(settings, "llm_provider", "carrier-pigeon")
-        _use(monkeypatch, settings)
+    def test_unknown_provider(self):
+        config = LlmConfig.model_construct(provider="carrier-pigeon", model="m", api_key="k", api_key_env="")
         with pytest.raises(ValueError, match="Unsupported"):
-            get_llm()
+            build_llm(config)
+
+
+class TestGetLlm:
+    def test_cached_per_tenant(self, monkeypatch):
+        calls = []
+
+        def fake_build(config):
+            calls.append(config.model)
+            return object()
+
+        monkeypatch.setattr(llm_service, "build_llm", fake_build)
+        tenant = _tenant()
+        first = get_llm(tenant)
+        second = get_llm(tenant)
+        assert first is second
+        assert calls == ["gpt-4o-mini"]
+
+    def test_separate_models_per_tenant(self, monkeypatch):
+        monkeypatch.setattr(llm_service, "build_llm", lambda config: object())
+        a = _tenant()
+        b = _tenant().model_copy(update={"id": "t2"})
+        assert get_llm(a) is not get_llm(b)
 
 
 class TestBuildMessages:
@@ -104,27 +115,25 @@ class TestBuildMessages:
         ]
 
     def test_system_prompt_first_and_client_system_messages_dropped(self):
-        msgs = build_langchain_messages(self._history(), "en")
+        msgs = build_langchain_messages(self._history(), "en", _tenant())
         assert isinstance(msgs[0], SystemMessage)
+        assert msgs[0].content == "EN prompt for one"
         assert [type(m) for m in msgs[1:]] == [HumanMessage, AIMessage, HumanMessage]
         assert all("client-provided" not in m.content for m in msgs)
 
     def test_locale_selects_prompt_language(self):
-        en = build_langchain_messages([], "en")[0].content
-        zh = build_langchain_messages([], "zh")[0].content
-        assert en != zh
+        tenant = _tenant()
+        assert build_system_prompt(tenant, "en") == "EN prompt for one"
+        assert build_system_prompt(tenant, "zh") == "ZH prompt for one"
+        assert build_system_prompt(tenant, "zh-CN") == "ZH prompt for one"
 
     def test_rag_context_is_prepended_to_system_prompt(self):
         chunks = [{"filename": "faq.md", "text": "We open at 9am.", "score": 0.9}]
-        msgs = build_langchain_messages_with_rag(self._history(), "en", chunks)
-        system = msgs[0].content
+        system = build_langchain_messages(self._history(), "en", _tenant(), chunks)[0].content
         assert "<retrieved_context>" in system
         assert "We open at 9am." in system
         assert "faq.md" in system
-        # The original prompt still follows the context block
-        assert system.index("</retrieved_context>") < len(system) - 50
+        assert system.endswith("EN prompt for one")
 
     def test_no_context_means_plain_prompt(self):
-        with_rag = build_langchain_messages_with_rag([], "en", [])[0].content
-        plain = build_langchain_messages([], "en")[0].content
-        assert with_rag == plain
+        assert build_system_prompt(_tenant(), "en", []) == "EN prompt for one"

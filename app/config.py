@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     app_name: str = "CHAT-API"
     app_description: str = "Reusable AI-powered chat assistant backend"
 
+    # Multi-tenant mode: path to a tenants YAML file (see deployments/tenants.yaml).
+    # Unset = one implicit tenant built from the variables below.
+    tenants_file: Optional[str] = None
+
     # LLM Provider Configuration
     llm_provider: Literal["openai", "anthropic", "gemini"] = "openai"
     openai_api_key: str = ""

@@ -1,47 +1,81 @@
 # Deployments
 
-One backend, one Cloud Run service per website. Everything that makes a
-deployment site-specific (prompts, CORS origins, model, knowledge-base
-settings) lives in `<site>/env.yaml`; API keys are attached from Secret
-Manager and never committed.
+One Cloud Run service (`chat-api`) serves every website. Sites are tenants in
+`tenants.yaml`; shared, non-secret settings are in `env.yaml`; API keys come
+from Secret Manager. Nothing secret is committed.
 
-| Site | Service | Config | Knowledge base |
-|------|---------|--------|----------------|
-| allisonhe.ca | `chat-api` | `ah-studio/env.yaml` | Pinecone index `chat-api-rag-ahstudio`, source in `ah-studio/knowledge_base.md` |
-| orctech.ca | `orctech-chat-api` | `orctech/env.yaml` | none (prompt only) |
+| File | Contents |
+|------|----------|
+| `tenants.yaml` | One entry per site: name, origins, model, prompts, knowledge-base namespace, limit overrides |
+| `env.yaml` | Shared settings: `TENANTS_FILE`, rate-limit window, context limits, Pinecone index, GCS bucket |
+| `ah-studio/knowledge_base.md` | Source document for the A.H. Studio knowledge base (uploaded, not read at runtime) |
 
-## Deploy or update a site
+Current tenants: `ah-studio` (allisonhe.ca, default, with knowledge base) and
+`orctech` (orctech.ca, prompt only).
+
+## Deploy
+
+From the repository root:
 
 ```bash
-# A.H. Studio
 gcloud run deploy chat-api \
-  --project=ah-studio-chat --region=us-central1 --source=. \
-  --env-vars-file=deployments/ah-studio/env.yaml \
-  --update-secrets="GEMINI_API_KEY=gemini-api-key:latest,PINECONE_API_KEY=pinecone-api-key:latest"
-
-# OrcTech
-gcloud run deploy orctech-chat-api \
   --project=ah-studio-chat --region=us-central1 --source=. --allow-unauthenticated \
-  --env-vars-file=deployments/orctech/env.yaml \
-  --update-secrets="GEMINI_API_KEY=orctech-gemini-api-key:latest"
+  --env-vars-file=deployments/env.yaml \
+  --update-secrets="AH_STUDIO_GEMINI_API_KEY=gemini-api-key:latest,ORCTECH_GEMINI_API_KEY=orctech-gemini-api-key:latest,PINECONE_API_KEY=pinecone-api-key:latest"
 ```
 
-`--env-vars-file` replaces the service's plain environment variables with the
-file's contents, so the file must be complete. Secrets are passed with
-`--update-secrets` so they survive redeploys.
+`--env-vars-file` replaces the service's plain environment variables, so
+`env.yaml` must be complete. Secrets are attached with `--update-secrets` and
+survive redeploys. The image contains `deployments/`, which is how
+`TENANTS_FILE=deployments/tenants.yaml` resolves inside the container.
 
-## Add a new site
+The service URL is `https://chat-api-204227115712.us-central1.run.app`; both
+websites point their widgets at it.
 
-1. Copy `orctech/` to `<site>/` and edit `env.yaml`: prompts, `CORS_ORIGINS`,
-   `APP_NAME`. Leave `PINECONE_INDEX` unset unless the site has a knowledge base.
-2. Store the site's LLM key: `gcloud secrets create <site>-gemini-api-key --data-file=key.txt`
-   and grant `roles/secretmanager.secretAccessor` to the Cloud Run service account.
-3. Deploy with the command pattern above, using a new service name.
-4. Point the website's chat widget at the service URL.
+## Add a site
 
-## Upload a knowledge base document
+1. Add an entry to `tenants.yaml`. Required: `origins`, `llm` (with
+   `api_key_env`), `prompts.en`. Optional: `prompts.zh`, `knowledge_base`,
+   `limits`.
+2. Store its LLM key and grant the service account access:
+
+   ```bash
+   printf '%s' "$KEY" | gcloud secrets create <site>-gemini-api-key --data-file=- --project=ah-studio-chat
+   gcloud secrets add-iam-policy-binding <site>-gemini-api-key --project=ah-studio-chat \
+     --member="serviceAccount:204227115712-compute@developer.gserviceaccount.com" \
+     --role="roles/secretmanager.secretAccessor"
+   ```
+
+3. Add `<ENV_NAME>=<site>-gemini-api-key:latest` to the `--update-secrets` list
+   and deploy. Startup fails fast if the variable named in `api_key_env` is
+   empty, so a forgotten secret is caught by the deploy.
+4. Point the site's widget at the service URL. Requests are matched to the
+   tenant by their `Origin`.
+
+A Gemini key created in a Google Cloud project with no billing account stays
+on the free tier; keys under a billed project need prepaid credit.
+
+## Knowledge base
+
+Documents are scoped per site with the `site` query parameter (or inferred
+from `Origin`):
 
 ```bash
 curl -X POST -F "file=@deployments/ah-studio/knowledge_base.md" \
-  https://<service-url>/rag/documents/upload
+  "https://chat-api-204227115712.us-central1.run.app/rag/documents/upload?site=ah-studio"
+curl "https://chat-api-204227115712.us-central1.run.app/rag/documents?site=ah-studio"
+```
+
+A tenant without a `knowledge_base` block answers from its prompt alone; its
+document endpoints return `400`.
+
+## Local run with the same configuration
+
+```bash
+docker build -t chat-api .
+docker run --rm -p 8080:8080 -e TENANTS_FILE=deployments/tenants.yaml \
+  -e AH_STUDIO_GEMINI_API_KEY=... -e ORCTECH_GEMINI_API_KEY=... chat-api
+curl -s -H "Origin: https://orctech.ca" -X POST localhost:8080/chat \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"t","messages":[{"role":"user","content":"What do you do?"}]}'
 ```

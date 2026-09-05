@@ -1,78 +1,83 @@
 """
 LangChain LLM integration service.
-Supports multiple providers with streaming capability.
+
+Builds one chat model per tenant (cached), assembles the message list and
+streams replies. Providers are selected by the tenant's `llm.provider`.
 """
 
 import logging
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.language_models import BaseChatModel
 
-from app.config import get_settings
-from app.prompts.system_prompts import get_system_prompt
 from app.models.schemas import ChatMessage
+from app.tenants import LlmConfig, Tenant
 
 logger = logging.getLogger(__name__)
 
+_llm_cache: dict[str, BaseChatModel] = {}
 
-def get_llm() -> BaseChatModel:
+
+def clear_llm_cache() -> None:
+    _llm_cache.clear()
+
+
+def build_llm(config: LlmConfig) -> BaseChatModel:
     """
-    Factory function to get the configured LLM provider.
-
-    Returns:
-        Configured LangChain chat model instance
+    Construct a LangChain chat model from an LLM config.
 
     Raises:
-        ValueError: If unsupported provider is configured
-        RuntimeError: If API key is missing for the provider
+        RuntimeError: If the API key is missing
+        ValueError: If the provider is not supported
     """
-    settings = get_settings()
+    if not config.api_key:
+        env_name = config.api_key_env or f"{config.provider.upper()}_API_KEY"
+        raise RuntimeError(f"{env_name} environment variable is required")
 
-    if settings.llm_provider == "openai":
-        if not settings.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY environment variable is required")
-
+    if config.provider == "openai":
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(
-            model=settings.openai_model,
-            api_key=settings.openai_api_key,
-            max_tokens=settings.max_tokens,
-            temperature=settings.temperature,
+            model=config.model,
+            api_key=config.api_key,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature,
             streaming=True,
         )
 
-    elif settings.llm_provider == "anthropic":
-        if not settings.anthropic_api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY environment variable is required")
-
+    if config.provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
         return ChatAnthropic(
-            model=settings.anthropic_model,
-            api_key=settings.anthropic_api_key,
-            max_tokens=settings.max_tokens,
-            temperature=settings.temperature,
+            model=config.model,
+            api_key=config.api_key,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature,
             streaming=True,
         )
 
-    elif settings.llm_provider == "gemini":
-        if not settings.gemini_api_key:
-            raise RuntimeError("GEMINI_API_KEY environment variable is required")
-
+    if config.provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
 
         # Temperature is intentionally left at the model default: Google
         # recommends against lowering it on Gemini 3+ models.
         return ChatGoogleGenerativeAI(
-            model=settings.gemini_model,
-            api_key=settings.gemini_api_key,
-            max_tokens=settings.max_tokens,
+            model=config.model,
+            api_key=config.api_key,
+            max_tokens=config.max_tokens,
         )
 
-    else:
-        raise ValueError(f"Unsupported LLM provider: {settings.llm_provider}")
+    raise ValueError(f"Unsupported LLM provider: {config.provider}")
+
+
+def get_llm(tenant: Tenant) -> BaseChatModel:
+    """The tenant's chat model, built on first use and cached."""
+    llm = _llm_cache.get(tenant.id)
+    if llm is None:
+        llm = build_llm(tenant.llm)
+        _llm_cache[tenant.id] = llm
+    return llm
 
 
 def chunk_text(chunk) -> str:
@@ -96,177 +101,76 @@ def chunk_text(chunk) -> str:
     return ""
 
 
-def build_langchain_messages(messages: list[ChatMessage], locale: str) -> list:
-    """
-    Convert API messages to LangChain message format.
+def build_system_prompt(tenant: Tenant, locale: str, context_chunks: Optional[list[dict]] = None) -> str:
+    """The tenant's prompt for the locale, with retrieved context prepended when present."""
+    prompt = tenant.prompt(locale)
+    if not context_chunks:
+        return prompt
 
-    Args:
-        messages: List of chat messages from API request
-        locale: Language locale for system prompt selection
-
-    Returns:
-        List of LangChain message objects
-    """
-    # Start with system prompt
-    langchain_messages = [SystemMessage(content=get_system_prompt(locale))]
-
-    # Add conversation history
-    for msg in messages:
-        if msg.role == "user":
-            langchain_messages.append(HumanMessage(content=msg.content))
-        elif msg.role == "assistant":
-            langchain_messages.append(AIMessage(content=msg.content))
-        # Skip system messages from client - we use our own
-
-    return langchain_messages
+    context_text = "\n\n---\n\n".join(
+        f"[Source: {chunk.get('filename', 'Unknown')}]\n{chunk.get('text', '')}"
+        for chunk in context_chunks
+    )
+    return (
+        "The following information has been retrieved from the knowledge base "
+        "to help answer the user's question:\n\n"
+        f"<retrieved_context>\n{context_text}\n</retrieved_context>\n\n"
+        "Use this context to inform your response when relevant. "
+        "If the context doesn't contain the answer, say so clearly.\n\n---\n\n"
+        f"{prompt}"
+    )
 
 
-def build_langchain_messages_with_rag(
+def build_langchain_messages(
     messages: list[ChatMessage],
     locale: str,
-    context_chunks: list[dict],
+    tenant: Tenant,
+    context_chunks: Optional[list[dict]] = None,
 ) -> list:
     """
-    Convert API messages to LangChain message format with RAG context.
+    Convert API messages to LangChain messages, led by the system prompt.
 
-    The retrieved context is prepended to the system prompt to provide
-    relevant information for answering user queries.
-
-    Args:
-        messages: List of chat messages from API request
-        locale: Language locale for system prompt selection
-        context_chunks: List of retrieved context dicts with 'text', 'filename', 'score'
-
-    Returns:
-        List of LangChain message objects with RAG context
+    Client-supplied system messages are dropped: the prompt is ours.
     """
-    # Build RAG context section
-    if context_chunks:
-        context_text = "\n\n---\n\n".join([
-            f"[Source: {chunk.get('filename', 'Unknown')}]\n{chunk.get('text', '')}"
-            for chunk in context_chunks
-        ])
-        rag_prefix = f"""The following information has been retrieved from the knowledge base to help answer the user's question:
-
-<retrieved_context>
-{context_text}
-</retrieved_context>
-
-Use this context to inform your response when relevant. If the context doesn't contain the answer, say so clearly.
-
----
-
-"""
-    else:
-        rag_prefix = ""
-
-    # Combine RAG context with system prompt
-    system_prompt = get_system_prompt(locale)
-    enhanced_system_prompt = rag_prefix + system_prompt
-
-    langchain_messages = [SystemMessage(content=enhanced_system_prompt)]
-
-    # Add conversation history
+    langchain_messages = [SystemMessage(content=build_system_prompt(tenant, locale, context_chunks))]
     for msg in messages:
         if msg.role == "user":
             langchain_messages.append(HumanMessage(content=msg.content))
         elif msg.role == "assistant":
             langchain_messages.append(AIMessage(content=msg.content))
-
     return langchain_messages
 
 
-async def generate_response_with_rag(
+async def generate_response(
     messages: list[ChatMessage],
     locale: str,
-    context_chunks: list[dict],
+    tenant: Tenant,
+    context_chunks: Optional[list[dict]] = None,
 ) -> str:
-    """
-    Generate a complete response with RAG context (non-streaming).
-
-    Args:
-        messages: Conversation history
-        locale: Response language preference
-        context_chunks: Retrieved context from vector store
-
-    Returns:
-        Complete response string
-    """
-    llm = get_llm()
-    langchain_messages = build_langchain_messages_with_rag(messages, locale, context_chunks)
-
-    logger.info(f"Generating RAG response for {len(messages)} messages with {len(context_chunks)} context chunks")
-
+    """Complete (non-streaming) reply."""
+    llm = get_llm(tenant)
+    langchain_messages = build_langchain_messages(messages, locale, tenant, context_chunks)
+    logger.info(
+        f"Generating response: tenant={tenant.id}, messages={len(messages)}, "
+        f"context={len(context_chunks or [])}"
+    )
     response = await llm.ainvoke(langchain_messages)
-    return response.content
-
-
-async def generate_response_stream_with_rag(
-    messages: list[ChatMessage],
-    locale: str,
-    context_chunks: list[dict],
-) -> AsyncGenerator[str, None]:
-    """
-    Generate a streaming response with RAG context.
-
-    Args:
-        messages: Conversation history
-        locale: Response language preference
-        context_chunks: Retrieved context from vector store
-
-    Yields:
-        Response tokens/chunks as they are generated
-    """
-    llm = get_llm()
-    langchain_messages = build_langchain_messages_with_rag(messages, locale, context_chunks)
-
-    logger.info(f"Streaming RAG response for {len(messages)} messages with {len(context_chunks)} context chunks")
-
-    async for chunk in llm.astream(langchain_messages):
-        text = chunk_text(chunk)
-        if text:
-            yield text
-
-
-async def generate_response(messages: list[ChatMessage], locale: str) -> str:
-    """
-    Generate a complete response (non-streaming).
-
-    Args:
-        messages: Conversation history
-        locale: Response language preference
-
-    Returns:
-        Complete response string
-    """
-    llm = get_llm()
-    langchain_messages = build_langchain_messages(messages, locale)
-
-    logger.info(f"Generating response for {len(messages)} messages in locale: {locale}")
-
-    response = await llm.ainvoke(langchain_messages)
-    return response.content
+    return chunk_text(response)
 
 
 async def generate_response_stream(
     messages: list[ChatMessage],
     locale: str,
+    tenant: Tenant,
+    context_chunks: Optional[list[dict]] = None,
 ) -> AsyncGenerator[str, None]:
-    """
-    Generate a streaming response.
-
-    Args:
-        messages: Conversation history
-        locale: Response language preference
-
-    Yields:
-        Response tokens/chunks as they are generated
-    """
-    llm = get_llm()
-    langchain_messages = build_langchain_messages(messages, locale)
-
-    logger.info(f"Streaming response for {len(messages)} messages in locale: {locale}")
-
+    """Streaming reply, yielding text as it arrives."""
+    llm = get_llm(tenant)
+    langchain_messages = build_langchain_messages(messages, locale, tenant, context_chunks)
+    logger.info(
+        f"Streaming response: tenant={tenant.id}, messages={len(messages)}, "
+        f"context={len(context_chunks or [])}"
+    )
     async for chunk in llm.astream(langchain_messages):
         text = chunk_text(chunk)
         if text:

@@ -7,7 +7,6 @@ __pycache__/
 .git/
 .github/
 tests/
-deployments/
 docs/
 *.md
 .vscode/

@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.config import get_settings
 from app.routes import chat as chat_routes
 from tests.conftest import chat_payload
 
@@ -27,12 +28,13 @@ async def read_sse(response):
 
 
 class TestHealth:
-    def test_health_reports_provider(self, client):
+    def test_health_reports_provider_and_tenants(self, client):
         r = client.get("/health")
         assert r.status_code == 200
         body = r.json()
         assert body["status"] == "healthy"
         assert body["provider"] == "openai"
+        assert body["tenants"] == ["default"]
 
     def test_root_lists_docs(self, client):
         assert client.get("/").json()["docs"] == "/docs"
@@ -54,7 +56,7 @@ class TestStreaming:
     async def test_llm_failure_becomes_error_event(self, async_client, monkeypatch):
         from app.services import llm_service
 
-        def boom():
+        def boom(tenant=None):
             raise RuntimeError("provider exploded")
 
         monkeypatch.setattr(llm_service, "get_llm", boom)
@@ -79,7 +81,7 @@ class TestStreaming:
 
     async def test_rag_failure_does_not_break_chat(self, async_client, fake_llm, monkeypatch):
         fake_llm("still fine")
-        monkeypatch.setattr(chat_routes.settings, "pinecone_api_key", "pc-test")
+        monkeypatch.setattr(get_settings(), "pinecone_api_key", "pc-test")
 
         async def exploding_query(**kwargs):
             raise ConnectionError("pinecone down")
@@ -122,14 +124,15 @@ class TestValidation:
 
 
 class TestTruncation:
-    def test_keeps_last_n_messages(self, monkeypatch):
-        monkeypatch.setattr(chat_routes.settings, "max_context_messages", 3)
-        msgs = list(range(10))
-        assert chat_routes.truncate_messages(msgs) == [7, 8, 9]
+    def test_keeps_last_n_messages(self):
+        assert chat_routes.truncate_messages(list(range(10)), max_context=3) == [7, 8, 9]
 
-    def test_short_history_untouched(self, monkeypatch):
-        monkeypatch.setattr(chat_routes.settings, "max_context_messages", 3)
-        assert chat_routes.truncate_messages([1, 2]) == [1, 2]
+    def test_short_history_untouched(self):
+        assert chat_routes.truncate_messages([1, 2], max_context=3) == [1, 2]
+
+    def test_default_comes_from_settings(self, monkeypatch):
+        monkeypatch.setattr(get_settings(), "max_context_messages", 2)
+        assert chat_routes.truncate_messages([1, 2, 3]) == [2, 3]
 
 
 class TestCors:

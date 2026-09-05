@@ -10,16 +10,19 @@ bilingual answers with guard-rails against made-up prices and runaway costs.
 
 It runs the assistants on [allisonhe.ca](https://allisonhe.ca) (a children's
 art studio) and [orctech.ca](https://orctech.ca) (a technology consultancy)
-from one codebase: one Cloud Run service per site, configured entirely through
-environment variables.
+from one Cloud Run service: each site is a tenant with its own prompts, model
+and knowledge base, matched by the request's `Origin`.
 
 ## Features
 
 - **Streaming replies** over Server-Sent Events, with stop-on-disconnect so an
   abandoned tab does not keep burning tokens
+- **Multi-tenant**: one deployment serves many websites; a request is routed
+  to its site by `Origin`, each site with its own prompts, model, limits and
+  knowledge-base namespace
 - **Pluggable providers**: Google Gemini, OpenAI and Anthropic through
-  LangChain; switch with one variable
-- **Prompt-first configuration**: site knowledge lives in a deployment file,
+  LangChain; per site, switch with one line
+- **Prompt-first configuration**: site knowledge lives in a YAML file,
   never in code; English and Chinese prompts selected per request
 - **Optional knowledge base**: upload PDFs or Markdown, get retrieval-augmented
   answers via Pinecone's integrated embeddings; degrades gracefully when absent
@@ -32,17 +35,19 @@ environment variables.
 
 ```mermaid
 flowchart LR
-    W[Chat widget<br/>any frontend] -- "POST /chat/stream<br/>session, history, locale" --> A[CHAT-API<br/>FastAPI on Cloud Run]
-    A -- "rate limit · validate · truncate" --> A
-    A -. "optional: search" .-> P[(Pinecone<br/>knowledge base)]
-    A -- "system prompt + context + history" --> L[LLM provider<br/>Gemini · OpenAI · Anthropic]
+    W1[Widget on site A] -- "POST /chat/stream<br/>Origin: a.example" --> A[CHAT-API<br/>FastAPI on Cloud Run]
+    W2[Widget on site B] -- "POST /chat/stream<br/>Origin: b.example" --> A
+    A -- "resolve tenant · rate limit<br/>validate · truncate" --> A
+    A -. "optional: search<br/>tenant namespace" .-> P[(Pinecone<br/>knowledge base)]
+    A -- "tenant prompt + context + history" --> L[LLM provider<br/>Gemini · OpenAI · Anthropic]
     L -- "token stream" --> A
-    A -- "SSE: token … done" --> W
+    A -- "SSE: token … done" --> W1
 ```
 
-Every request is checked against the rate limit and size limits, trimmed to
-the last N messages, optionally enriched with retrieved context, and sent to
-the configured model. Tokens are relayed to the browser as they arrive.
+Every request is matched to its site, checked against that site's rate limit
+and size limits, trimmed to the last N messages, optionally enriched with
+context from the site's knowledge base, and sent to the site's model. Tokens
+are relayed to the browser as they arrive.
 
 ## Quick start
 
@@ -96,27 +101,34 @@ Request body:
 A complete browser client is ~40 lines; see
 [Frontend integration](docs/guide.md#frontend-integration).
 
-## Configuring a site
+## Adding a site
 
-1. Copy `deployments/orctech/env.yaml` to `deployments/<site>/env.yaml`.
-2. Write the `SYSTEM_PROMPT_EN` and `SYSTEM_PROMPT_ZH` blocks: who the assistant
-   is, verified facts, what it may answer, what it must hand off to a human.
-3. Set `CORS_ORIGINS` to the site's origins.
-4. Deploy:
+Add a tenant to `deployments/tenants.yaml`:
 
-```bash
-gcloud run deploy <site>-chat-api --region=us-central1 --source=. --allow-unauthenticated \
-  --env-vars-file=deployments/<site>/env.yaml \
-  --update-secrets="GEMINI_API_KEY=<site>-gemini-api-key:latest"
+```yaml
+tenants:
+  my-site:
+    name: My Site
+    origins: [https://my-site.example, https://www.my-site.example]
+    llm: { provider: gemini, model: gemini-3.1-flash-lite, api_key_env: MY_SITE_GEMINI_API_KEY }
+    prompts:
+      en: |
+        You are the assistant for My Site. ...
+    knowledge_base: { namespace: my-site }   # optional
 ```
 
-Details, including secrets and the knowledge base, are in
-[deployments/README.md](deployments/README.md).
+Put the key in Secret Manager, mount it as `MY_SITE_GEMINI_API_KEY`, redeploy,
+and point the site's widget at the service URL. Requests are routed by
+`Origin`; a single-site deployment can skip the file entirely and configure
+everything with environment variables.
+
+Details: [deployments/README.md](deployments/README.md).
 
 ## Configuration
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
+| `TENANTS_FILE` | – | Multi-site mode: path to a tenants YAML file; the variables below then only supply shared settings |
 | `LLM_PROVIDER` | `openai` | `openai`, `anthropic` or `gemini` |
 | `GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` | – | Key for the chosen provider |
 | `GEMINI_MODEL` / `OPENAI_MODEL` / `ANTHROPIC_MODEL` | `gemini-3.1-flash-lite` / `gpt-4o-mini` / `claude-3-haiku-20240307` | Model per provider |
@@ -131,7 +143,7 @@ Full reference: [docs/guide.md](docs/guide.md#configuration).
 ## Development
 
 ```bash
-pytest                      # 44 tests, no network, ~2 s
+pytest                      # 74 tests, no network, ~2 s
 docker build -t chat-api .  # what CI and Cloud Run build
 ```
 
@@ -139,21 +151,21 @@ Layout:
 
 ```
 app/
-  main.py              FastAPI app, CORS, lifespan
-  config.py            all settings (pydantic-settings)
+  main.py              app factory, CORS, lifespan
+  config.py            shared settings (pydantic-settings)
+  tenants.py           tenant model, YAML loader, per-request resolution
   routes/              chat, health, rag endpoints
   services/            llm_service (providers, streaming), vector store, documents, storage
-  middleware/          in-memory rate limiter
-  prompts/             generic default prompts and loader
-deployments/           one folder per site: env.yaml (+ knowledge base source)
+  middleware/          in-memory rate limiter (per tenant and IP)
+  prompts/             generic default prompts
+deployments/           tenants.yaml, shared env.yaml, knowledge base sources
 tests/                 pytest suite with a canned LLM
-docs/guide.md          operator's guide
+docs/                  operator's guide and design specs
 ```
 
 ## Roadmap
 
 - Embeddable widget served by the API (one `<script>` tag)
-- Multi-tenant mode: one service, many sites, keyed by origin
 - Website crawler to build the knowledge base from a URL
 - Provider fallback when the primary model is overloaded
 

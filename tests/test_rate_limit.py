@@ -4,6 +4,7 @@ import time
 
 import pytest
 
+from app.config import get_settings
 from app.middleware import rate_limit as rl
 from tests.conftest import chat_payload
 
@@ -39,7 +40,7 @@ class TestRateLimiter:
 class TestHttp:
     @pytest.fixture(autouse=True)
     def small_limit(self, monkeypatch):
-        monkeypatch.setattr(rl.settings, "rate_limit_requests", 2)
+        monkeypatch.setattr(get_settings(), "rate_limit_requests", 2)
         monkeypatch.setattr(rl, "rate_limiter", rl.RateLimiter())
 
     def test_429_after_limit_with_retry_after(self, client, fake_llm):
@@ -49,7 +50,7 @@ class TestHttp:
         assert client.post("/chat", json=chat_payload("a"), headers=headers).status_code == 200
         r = client.post("/chat", json=chat_payload("a"), headers=headers)
         assert r.status_code == 429
-        assert r.headers["retry-after"] == str(rl.settings.rate_limit_window)
+        assert r.headers["retry-after"] == str(get_settings().rate_limit_window)
 
     def test_forwarded_header_identifies_client(self, client, fake_llm):
         fake_llm("ok")
