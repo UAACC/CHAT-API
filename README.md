@@ -106,7 +106,7 @@ sequenceDiagram
     end
     M-->>S: tokens
     S-->>B: event: token … event: done
-    Note over B,S: closing the tab aborts the request; generation stops
+    Note over B,S: closing the tab aborts the request and generation stops
 ```
 
 ## Quick start
