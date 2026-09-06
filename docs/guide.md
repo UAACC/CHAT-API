@@ -312,10 +312,31 @@ they can be listed and deleted later. If retrieval fails the request continues
 without context and a warning is logged.
 
 All document endpoints take an optional `?site=<id>` (or infer the tenant
-from `Origin`); a tenant without a `knowledge_base` block gets `400`.
-Endpoints that change the knowledge base require
+from `Origin`); a tenant without a `knowledge_base` block gets `400`. Every
+`/rag/*` endpoint except `/rag/status` requires
 `Authorization: Bearer <ADMIN_TOKEN>` once `ADMIN_TOKEN` is set; leave it
 unset only for local experiments (the app warns at startup).
+
+### The knowledge console
+
+Open `https://<service>/admin`, paste the admin token, pick a site. The page
+is the fastest way to answer "why did it say that?":
+
+- **Documents**: every indexed document with its chunks as stored; delete,
+  upload, or crawl from here.
+- **Retrieval test**: type a visitor's question and see the chunks it pulls
+  in with their scores; hits below `RAG_MIN_SCORE_THRESHOLD` are greyed out
+  because the model would never see them.
+- **Test answer**: the same question through `/chat/rag`, with the reply and
+  the context it actually used.
+- **Notes**: curated facts, one paragraph each. Saving replaces the `notes`
+  document and indexes each paragraph as its own chunk, so a correction
+  ("Summer term starts July 2.") is retrievable within seconds without
+  touching the website or the prompt.
+
+The same operations are available as endpoints for scripts:
+`GET /rag/documents/{id}/chunks`, `GET /rag/search?q=…&top_k=…`,
+`GET /rag/notes`, `PUT /rag/notes {"text": "…"}`.
 
 ### Building the knowledge base from the website
 

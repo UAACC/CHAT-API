@@ -77,12 +77,109 @@ class TestAdminToken:
         r = two_tenant_client.post("/rag/documents/upload", params={"site": "studio"}, files={"file": ("a.txt", b"hello")})
         assert r.status_code == 401
 
-    def test_reads_stay_open(self, two_tenant_client, admin, monkeypatch):
+    def test_reads_require_token_too(self, two_tenant_client, admin, monkeypatch):
         async def none(prefix=None):
             return []
 
         monkeypatch.setattr(rag_routes.storage_service, "list_documents", none)
-        assert two_tenant_client.get("/rag/documents", params={"site": "studio"}).status_code == 200
+        assert two_tenant_client.get("/rag/documents", params={"site": "studio"}).status_code == 401
+        assert two_tenant_client.get("/rag/documents", params={"site": "studio"}, headers=admin).status_code == 200
+
+    def test_status_stays_open(self, two_tenant_client, admin, monkeypatch):
+        monkeypatch.setattr(rag_routes.storage_service, "check_storage_health", lambda: {"status": "healthy"})
+        monkeypatch.setattr(rag_routes.vector_store_service, "check_vector_store_health", lambda: {"status": "healthy"})
+        assert two_tenant_client.get("/rag/status").status_code == 200
+
+
+class TestConsoleEndpoints:
+    def test_document_chunks(self, two_tenant_client, admin, monkeypatch):
+        seen = {}
+
+        async def fake_records(document_id, namespace="__default__"):
+            seen["args"] = (document_id, namespace)
+            return [
+                {"id": "d_1", "chunk_index": 1, "text": "second", "url": "https://s.example/a", "title": "A"},
+                {"id": "d_0", "chunk_index": 0, "text": "first", "url": None, "title": None},
+            ]
+
+        monkeypatch.setattr(rag_routes.vector_store_service, "get_document_records", fake_records)
+        r = two_tenant_client.get("/rag/documents/d/chunks", params={"site": "studio"}, headers=admin)
+        assert r.status_code == 200
+        assert seen["args"] == ("d", "studio-ns")
+        assert [c["text"] for c in r.json()["chunks"]] == ["second", "first"]  # service order preserved
+
+    def test_search_flags_threshold(self, two_tenant_client, admin, monkeypatch):
+        seen = {}
+
+        async def fake_query(**kwargs):
+            seen.update(kwargs)
+            return [
+                {"id": "a_0", "score": 0.42, "metadata": {"document_id": "a", "filename": "a.md", "text": "strong"}},
+                {"id": "b_0", "score": 0.05, "metadata": {"document_id": "b", "filename": "b.md", "text": "weak"}},
+            ]
+
+        monkeypatch.setattr(rag_routes.vector_store_service, "query_vectors", fake_query)
+        r = two_tenant_client.get("/rag/search", params={"site": "studio", "q": "trial class", "top_k": 6}, headers=admin)
+        assert r.status_code == 200
+        body = r.json()
+        assert seen["namespace"] == "studio-ns" and seen["top_k"] == 6 and seen["min_score"] == 0.0
+        assert body["threshold"] == get_settings().rag_min_score_threshold
+        assert [(h["filename"], h["used"]) for h in body["hits"]] == [("a.md", True), ("b.md", False)]
+
+    def test_search_requires_query(self, two_tenant_client, admin):
+        assert two_tenant_client.get("/rag/search", params={"site": "studio"}, headers=admin).status_code == 422
+
+    def test_notes_round_trip(self, two_tenant_client, admin, monkeypatch):
+        store = {"text": ""}
+        deleted, upserted, uploaded = [], [], []
+
+        async def delete_document(document_id, namespace="__default__", storage_prefix=None):
+            deleted.append((document_id, namespace, storage_prefix))
+
+        async def upload_file(document_id, filename, content, content_type, prefix=None):
+            uploaded.append((document_id, filename, prefix))
+            store["text"] = content.decode("utf-8")
+            return "gs://x"
+
+        async def download_file(document_id, filename, prefix=None):
+            return store["text"].encode("utf-8") if store["text"] else None
+
+        async def upsert_records(records, namespace="__default__"):
+            upserted.append((namespace, records))
+            return len(records)
+
+        from app.services import document_service as ds
+
+        monkeypatch.setattr(ds, "delete_document", delete_document)
+        monkeypatch.setattr(ds.storage_service, "upload_file", upload_file)
+        monkeypatch.setattr(ds.storage_service, "download_file", download_file)
+        monkeypatch.setattr(ds.vector_store_service, "upsert_records", upsert_records)
+
+        text = "Summer term starts July 2.\n\n\nWe do not offer online classes.\n"
+        r = two_tenant_client.put("/rag/notes", params={"site": "studio"}, json={"text": text}, headers=admin)
+        assert r.status_code == 200
+        assert r.json()["notes"] == 2
+        assert deleted == [("notes", "studio-ns", f"{get_settings().gcs_prefix}/studio")]
+        assert uploaded[0][:2] == ("notes", "notes.md")
+        namespace, records = upserted[0]
+        assert namespace == "studio-ns"
+        assert [rec["_id"] for rec in records] == ["notes_0", "notes_1"]
+        assert records[1]["text"] == "We do not offer online classes."
+        assert records[0]["filename"] == "notes.md" and records[0]["document_id"] == "notes"
+
+        r = two_tenant_client.get("/rag/notes", params={"site": "studio"}, headers=admin)
+        assert r.json() == {"text": text, "notes": 2}
+
+        # Empty text clears the document without indexing anything
+        r = two_tenant_client.put("/rag/notes", params={"site": "studio"}, json={"text": "  \n"}, headers=admin)
+        assert r.json()["notes"] == 0
+        assert len(upserted) == 1 and len(deleted) == 2
+
+    def test_console_page(self, client):
+        r = client.get("/admin")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/html")
+        assert "/rag/search" in r.text and "/rag/notes" in r.text
 
 
 class TestCrawlEndpoint:

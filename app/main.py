@@ -73,6 +73,7 @@ def create_app(registry: Optional[TenantRegistry] = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(chat.router)
     app.include_router(rag.router)
+    app.include_router(rag.status_router)
     app.include_router(widget.router)
     return app
 

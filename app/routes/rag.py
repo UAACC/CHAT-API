@@ -15,16 +15,22 @@ from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Requ
 
 from app.config import get_settings
 from app.models.schemas import (
+    ChunkInfo,
     CrawlRequest,
     CrawlResponse,
     CrawledPage,
+    DocumentChunksResponse,
     DocumentUploadResponse,
     DocumentListResponse,
     DocumentDetailResponse,
     DocumentDeleteResponse,
     DocumentInfo,
+    NotesResponse,
+    NotesUpdate,
     RAGStatusResponse,
     RAGServiceStatus,
+    SearchHit,
+    SearchResponse,
 )
 from app.services import (
     crawler,
@@ -36,12 +42,10 @@ from app.tenants import KnowledgeBaseConfig, Tenant, TenantRegistry, get_registr
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/rag", tags=["rag"])
-
 
 def require_admin(authorization: Optional[str] = Header(None)) -> None:
     """
-    Guard for endpoints that change a knowledge base.
+    Guard for the knowledge-base endpoints.
 
     Enforced only when ADMIN_TOKEN is configured; otherwise open (the app
     warns at startup).
@@ -52,6 +56,12 @@ def require_admin(authorization: Optional[str] = Header(None)) -> None:
     scheme, _, token = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not hmac.compare_digest(token.strip(), expected):
         raise HTTPException(status_code=401, detail="admin token required", headers={"WWW-Authenticate": "Bearer"})
+
+
+# Everything that reads or changes a knowledge base is behind the admin token.
+router = APIRouter(prefix="/rag", tags=["rag"], dependencies=[Depends(require_admin)])
+# Monitoring stays open.
+status_router = APIRouter(prefix="/rag", tags=["rag"])
 
 
 def knowledge_base_for(
@@ -66,7 +76,7 @@ def knowledge_base_for(
     return tenant, tenant.knowledge_base
 
 
-@router.post("/documents/upload", response_model=DocumentUploadResponse, dependencies=[Depends(require_admin)])
+@router.post("/documents/upload", response_model=DocumentUploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
     kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for),
@@ -178,7 +188,7 @@ async def get_document(document_id: str, kb: tuple[Tenant, KnowledgeBaseConfig] 
         raise HTTPException(status_code=500, detail=f"Failed to get document: {str(e)}")
 
 
-@router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse, dependencies=[Depends(require_admin)])
+@router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
 async def delete_document(document_id: str, kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for)):
     """Remove a document: its stored file and all of its vectors."""
     _, config = kb
@@ -197,7 +207,74 @@ async def delete_document(document_id: str, kb: tuple[Tenant, KnowledgeBaseConfi
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
 
 
-@router.post("/crawl", response_model=CrawlResponse, dependencies=[Depends(require_admin)])
+@router.get("/documents/{document_id}/chunks", response_model=DocumentChunksResponse)
+async def document_chunks(document_id: str, kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for)):
+    """Every stored chunk of a document, in order: what the assistant can actually retrieve."""
+    _, config = kb
+    try:
+        records = await vector_store_service.get_document_records(document_id, config.namespace)
+    except Exception as e:
+        logger.error(f"Error reading chunks for {document_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read chunks: {str(e)}")
+    return DocumentChunksResponse(document_id=document_id, chunks=[ChunkInfo(**r) for r in records])
+
+
+@router.get("/search", response_model=SearchResponse)
+async def search(
+    q: str = Query(..., min_length=1, max_length=500),
+    top_k: int = Query(5, ge=1, le=20),
+    kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for),
+):
+    """Retrieval test: the chunks a question would pull in, with scores, no model call."""
+    _, config = kb
+    threshold = get_settings().rag_min_score_threshold
+    try:
+        matches = await vector_store_service.query_vectors(
+            query_text=q, top_k=top_k, min_score=0.0, namespace=config.namespace
+        )
+    except Exception as e:
+        logger.error(f"Search failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+    hits = [
+        SearchHit(
+            id=m["id"],
+            score=m["score"],
+            used=m["score"] >= threshold,
+            document_id=m["metadata"].get("document_id", ""),
+            filename=m["metadata"].get("filename", ""),
+            text=m["metadata"].get("text", ""),
+        )
+        for m in matches
+    ]
+    return SearchResponse(query=q, threshold=threshold, hits=hits)
+
+
+@router.get("/notes", response_model=NotesResponse)
+async def get_notes(kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for)):
+    """The site's curated notes."""
+    _, config = kb
+    try:
+        text = await document_service.read_notes(config.storage_prefix)
+    except Exception as e:
+        logger.error(f"Error reading notes: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read notes: {str(e)}")
+    return NotesResponse(text=text, notes=len(document_service.split_notes(text)))
+
+
+@router.put("/notes", response_model=NotesResponse)
+async def put_notes(body: NotesUpdate, kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for)):
+    """Replace the site's curated notes; one paragraph becomes one retrievable chunk."""
+    tenant, config = kb
+    try:
+        result = await document_service.index_notes(body.text, config.namespace, config.storage_prefix)
+    except Exception as e:
+        logger.error(f"Error saving notes for {tenant.id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save notes: {str(e)}")
+    logger.info(f"Notes updated for {tenant.id}: {result['notes']} notes")
+    return NotesResponse(text=body.text, notes=result["notes"])
+
+
+@router.post("/crawl", response_model=CrawlResponse)
 async def crawl_site(
     body: CrawlRequest,
     kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for),
@@ -255,7 +332,7 @@ async def crawl_site(
     )
 
 
-@router.get("/status", response_model=RAGStatusResponse)
+@status_router.get("/status", response_model=RAGStatusResponse)
 async def get_rag_status():
     """Connectivity of the storage bucket and the vector store."""
     storage_status = storage_service.check_storage_health()

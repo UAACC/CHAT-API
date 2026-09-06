@@ -4,6 +4,7 @@ Supports PDF, TXT, and Markdown files.
 """
 
 import logging
+import re
 import uuid
 from typing import Optional
 
@@ -348,3 +349,58 @@ async def delete_document(
 def generate_document_id() -> str:
     """Generate a unique document ID."""
     return str(uuid.uuid4())
+
+
+NOTES_DOCUMENT_ID = "notes"
+NOTES_FILENAME = "notes.md"
+
+
+def split_notes(text: str) -> list[str]:
+    """One note per paragraph (blank-line separated), trimmed, empties dropped."""
+    return [p.strip() for p in re.split(r"\n\s*\n", text.replace("\r\n", "\n")) if p.strip()]
+
+
+async def index_notes(
+    text: str,
+    namespace: str = "__default__",
+    storage_prefix: Optional[str] = None,
+) -> dict:
+    """
+    Replace the tenant's curated notes document.
+
+    Each paragraph becomes its own record so a single fact is retrieved on
+    its own. Empty text removes the document.
+    """
+    await delete_document(NOTES_DOCUMENT_ID, namespace, storage_prefix)
+    notes = split_notes(text)
+    if not notes:
+        return {"document_id": NOTES_DOCUMENT_ID, "notes": 0, "vector_count": 0}
+
+    await storage_service.upload_file(
+        document_id=NOTES_DOCUMENT_ID,
+        filename=NOTES_FILENAME,
+        content=text.encode("utf-8"),
+        content_type="text/markdown",
+        prefix=storage_prefix,
+    )
+    records = [
+        {
+            "_id": f"{NOTES_DOCUMENT_ID}_{i}",
+            "text": note[:4000],
+            "document_id": NOTES_DOCUMENT_ID,
+            "filename": NOTES_FILENAME,
+            "title": "Notes",
+            "chunk_index": i,
+            "total_chunks": len(notes),
+        }
+        for i, note in enumerate(notes)
+    ]
+    upserted = await vector_store_service.upsert_records(records, namespace)
+    logger.info(f"Indexed {len(notes)} notes in namespace {namespace}")
+    return {"document_id": NOTES_DOCUMENT_ID, "notes": len(notes), "vector_count": upserted}
+
+
+async def read_notes(storage_prefix: Optional[str] = None) -> str:
+    """Current notes text, or empty when none are stored."""
+    content = await storage_service.download_file(NOTES_DOCUMENT_ID, NOTES_FILENAME, storage_prefix)
+    return content.decode("utf-8") if content else ""

@@ -48,3 +48,10 @@ async def widget_demo() -> HTMLResponse:
     """A page that embeds the widget from this service."""
     content, _, _ = _asset("demo.html")
     return HTMLResponse(content=content.decode("utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@router.get("/admin", include_in_schema=False)
+async def knowledge_console() -> HTMLResponse:
+    """The knowledge console. The page itself is public; every call it makes needs the admin token."""
+    content, _, _ = _asset("admin.html")
+    return HTMLResponse(content=content.decode("utf-8"), headers={"Cache-Control": "no-cache"})

@@ -280,3 +280,35 @@ async def delete_vectors(document_id: str, namespace: str = "__default__") -> bo
 async def get_document_vector_count(document_id: str, namespace: str = "__default__") -> int:
     """Legacy: Get vector count for document."""
     return await get_document_record_count(document_id, namespace)
+
+
+async def get_document_records(document_id: str, namespace: str = "__default__") -> list[dict]:
+    """
+    Every stored chunk of a document, ordered by chunk index.
+
+    Returns:
+        Dicts with id, chunk_index, text, url, title
+    """
+    index = get_index()
+    results = index.search(
+        namespace=namespace,
+        query={
+            "top_k": 10000,
+            "inputs": {"text": "document"},
+            "filter": {"document_id": {"$eq": document_id}},
+        },
+        fields=["text", "chunk_index", "url", "title", "filename"],
+    )
+    results_dict = results.to_dict() if hasattr(results, "to_dict") else results
+    records = []
+    for hit in results_dict.get("result", {}).get("hits", []):
+        fields = hit.get("fields", {}) or {}
+        records.append({
+            "id": hit.get("_id") or hit.get("id_", ""),
+            "chunk_index": int(fields.get("chunk_index", 0) or 0),
+            "text": fields.get("text", ""),
+            "url": fields.get("url"),
+            "title": fields.get("title"),
+        })
+    records.sort(key=lambda r: r["chunk_index"])
+    return records

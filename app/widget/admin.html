@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Knowledge console</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f6f7f9; --fg: #111827; --muted: #6b7280; --card: #fff; --border: #e5e7eb; --accent: #2563eb; --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --soft: #f3f4f6; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #0b0d12; --fg: #e5e7eb; --muted: #9ca3af; --card: #12151c; --border: #262a33; --soft: #1a1e27; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--card); position: sticky; top: 0; z-index: 5; }
+    header h1 { font-size: 16px; margin: 0 16px 0 0; }
+    main { max-width: 1080px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; }
+    .card h2 { font-size: 15px; margin: 0 0 6px; }
+    .card p.hint { color: var(--muted); margin: 0 0 12px; font-size: 13px; }
+    input[type=text], input[type=password], input[type=url], select, textarea { font: inherit; color: inherit; background: var(--soft); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+    input[type=text], input[type=url] { min-width: 260px; }
+    textarea { width: 100%; min-height: 180px; resize: vertical; font-family: inherit; }
+    button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--soft); color: inherit; cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.danger { color: var(--bad); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    th { color: var(--muted); font-weight: 600; }
+    td.num { text-align: right; white-space: nowrap; }
+    .chunk { border-left: 3px solid var(--border); padding: 6px 10px; margin: 6px 0; white-space: pre-wrap; background: var(--soft); border-radius: 0 6px 6px 0; }
+    .chunk.used { border-left-color: var(--ok); }
+    .chunk.unused { opacity: .55; }
+    .chunk .meta { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .status { font-size: 13px; color: var(--muted); min-height: 1.4em; }
+    .status.err { color: var(--bad); }
+    .status.ok { color: var(--ok); }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; background: var(--soft); color: var(--muted); }
+    .answer { white-space: pre-wrap; background: var(--soft); border-radius: 8px; padding: 12px; margin-top: 8px; }
+    details summary { cursor: pointer; color: var(--accent); }
+    [hidden] { display: none !important; }
+    @media (max-width: 640px) { main { padding: 14px; } input[type=text], input[type=url] { min-width: 0; width: 100%; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Knowledge console</h1>
+  <label>Site <select id="site"></select></label>
+  <label>Token <input id="token" type="password" placeholder="ADMIN_TOKEN" autocomplete="off"></label>
+  <button id="connect" class="primary">Connect</button>
+  <span id="conn" class="status"></span>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Documents</h2>
+    <p class="hint">Everything the assistant can retrieve for this site. Expand a document to read its chunks exactly as stored.</p>
+    <div id="docs"></div>
+    <div class="row">
+      <input id="file" type="file" accept=".pdf,.md,.txt,.markdown,text/plain">
+      <button id="upload">Upload</button>
+      <span style="color:var(--muted)">or</span>
+      <input id="crawl-url" type="url" placeholder="https://your-site.example">
+      <button id="crawl">Crawl site</button>
+    </div>
+    <div id="docs-status" class="status"></div>
+  </section>
+
+  <section class="card">
+    <h2>Retrieval test</h2>
+    <p class="hint">What a visitor's question pulls out of the knowledge base, before any model sees it. Grey hits are below the threshold and would not be used.</p>
+    <div class="row">
+      <input id="q" type="text" placeholder="e.g. Do you offer trial classes?">
+      <button id="search" class="primary">Retrieve</button>
+      <button id="answer">Test answer</button>
+    </div>
+    <div id="search-status" class="status"></div>
+    <div id="hits"></div>
+    <div id="answer-box" hidden>
+      <div class="answer" id="answer-text"></div>
+      <details style="margin-top:8px"><summary>Context the model received</summary><div id="answer-ctx"></div></details>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Notes</h2>
+    <p class="hint">Curated facts and standard answers, one paragraph each. Saving re-indexes them immediately; each paragraph is retrieved on its own.</p>
+    <textarea id="notes" placeholder="Summer term starts July 2.&#10;&#10;We do not offer online classes."></textarea>
+    <div class="row">
+      <button id="save-notes" class="primary">Save notes</button>
+      <span id="notes-status" class="status"></span>
+    </div>
+  </section>
+</main>
+
+<script>
+(function () {
+  var API = location.origin;
+  var $ = function (id) { return document.getElementById(id); };
+  var state = { token: sessionStorage.getItem('admin-token') || '', site: sessionStorage.getItem('admin-site') || '' };
+  $('token').value = state.token;
+
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function setStatus(id, text, kind) { var el = $(id); el.textContent = text || ''; el.className = 'status' + (kind ? ' ' + kind : ''); }
+
+  function api(path, opts) {
+    opts = opts || {};
+    var headers = opts.headers || {};
+    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+    var sep = path.indexOf('?') >= 0 ? '&' : '?';
+    var url = API + path + (path.indexOf('/rag/') === 0 ? sep + 'site=' + encodeURIComponent(state.site) : '');
+    return fetch(url, { method: opts.method || 'GET', headers: headers, body: opts.body }).then(function (r) {
+      return r.text().then(function (t) {
+        var data = {};
+        try { data = t ? JSON.parse(t) : {}; } catch (e) { data = { detail: t }; }
+        if (!r.ok) throw new Error(data.detail ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)) : ('HTTP ' + r.status));
+        return data;
+      });
+    });
+  }
+  function json(method, path, body) {
+    return api(path, { method: method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  }
+
+  /* ---- connect ---- */
+  function loadSites() {
+    return fetch(API + '/health').then(function (r) { return r.json(); }).then(function (h) {
+      var sel = $('site'); sel.innerHTML = '';
+      (h.tenants || []).forEach(function (id) {
+        var o = document.createElement('option'); o.value = id; o.textContent = id; sel.appendChild(o);
+      });
+      if (!state.site || (h.tenants || []).indexOf(state.site) < 0) state.site = (h.tenants || [])[0] || '';
+      sel.value = state.site;
+    });
+  }
+  function connect() {
+    state.token = $('token').value.trim();
+    state.site = $('site').value;
+    sessionStorage.setItem('admin-token', state.token);
+    sessionStorage.setItem('admin-site', state.site);
+    setStatus('conn', 'Connecting…');
+    return Promise.all([loadDocs(), loadNotes()]).then(function () {
+      setStatus('conn', 'Connected to ' + state.site, 'ok');
+    }).catch(function (e) { setStatus('conn', e.message, 'err'); });
+  }
+  $('connect').addEventListener('click', connect);
+  $('site').addEventListener('change', connect);
+  $('token').addEventListener('keydown', function (e) { if (e.key === 'Enter') connect(); });
+
+  /* ---- documents ---- */
+  function loadDocs() {
+    return api('/rag/documents').then(function (d) {
+      var docs = d.documents || [];
+      if (!docs.length) { $('docs').innerHTML = '<p class="hint">No documents yet. Upload a file, crawl the site, or add notes below.</p>'; return; }
+      var html = '<table><thead><tr><th>Document</th><th class="num">Size</th><th class="num">Chunks</th><th>Added</th><th></th></tr></thead><tbody>';
+      docs.forEach(function (doc) {
+        html += '<tr data-id="' + esc(doc.id) + '"><td><details><summary>' + esc(doc.filename) + '</summary><div class="chunks" data-id="' + esc(doc.id) + '"><span class="hint">Loading…</span></div></details></td>' +
+          '<td class="num">' + Math.round((doc.size || 0) / 1024) + ' KB</td><td class="num">' + esc(doc.vector_count) + '</td>' +
+          '<td>' + esc((doc.created_at || '').slice(0, 10)) + '</td>' +
+          '<td class="num"><button class="danger del" data-id="' + esc(doc.id) + '" data-name="' + esc(doc.filename) + '">Delete</button></td></tr>';
+      });
+      $('docs').innerHTML = html + '</tbody></table>';
+      $('docs').querySelectorAll('details').forEach(function (det) {
+        det.addEventListener('toggle', function () {
+          if (!det.open) return;
+          var box = det.querySelector('.chunks');
+          if (box.dataset.loaded) return;
+          api('/rag/documents/' + encodeURIComponent(box.dataset.id) + '/chunks').then(function (r) {
+            box.dataset.loaded = '1';
+            if (!r.chunks.length) { box.innerHTML = '<span class="hint">No chunks stored.</span>'; return; }
+            box.innerHTML = r.chunks.map(function (c) {
+              return '<div class="chunk"><div class="meta">#' + c.chunk_index + (c.url ? ' · ' + esc(c.url) : '') + '</div>' + esc(c.text) + '</div>';
+            }).join('');
+          }).catch(function (e) { box.innerHTML = '<span class="status err">' + esc(e.message) + '</span>'; });
+        });
+      });
+      $('docs').querySelectorAll('button.del').forEach(function (b) {
+        b.addEventListener('click', function () {
+          b.disabled = true; setStatus('docs-status', 'Deleting ' + b.dataset.name + '…');
+          api('/rag/documents/' + encodeURIComponent(b.dataset.id), { method: 'DELETE' })
+            .then(function () { setStatus('docs-status', 'Deleted ' + b.dataset.name, 'ok'); return loadDocs(); })
+            .catch(function (e) { setStatus('docs-status', e.message, 'err'); b.disabled = false; });
+        });
+      });
+    });
+  }
+  $('upload').addEventListener('click', function () {
+    var f = $('file').files[0];
+    if (!f) { setStatus('docs-status', 'Choose a file first', 'err'); return; }
+    var fd = new FormData(); fd.append('file', f);
+    setStatus('docs-status', 'Uploading and indexing ' + f.name + '…');
+    api('/rag/documents/upload', { method: 'POST', body: fd })
+      .then(function (r) { setStatus('docs-status', f.name + ': ' + r.chunk_count + ' chunks indexed', 'ok'); $('file').value = ''; return loadDocs(); })
+      .catch(function (e) { setStatus('docs-status', e.message, 'err'); });
+  });
+  $('crawl').addEventListener('click', function () {
+    var url = $('crawl-url').value.trim();
+    if (!url) { setStatus('docs-status', 'Enter a URL to crawl', 'err'); return; }
+    $('crawl').disabled = true; setStatus('docs-status', 'Crawling ' + url + ' (this can take a minute)…');
+    json('POST', '/rag/crawl', { url: url, max_pages: 30, max_depth: 3 })
+      .then(function (r) {
+        var skipped = r.skipped.length ? ' · skipped ' + r.skipped.length + ' (' + r.skipped.slice(0, 3).map(function (s) { return s.reason; }).join(', ') + ')' : '';
+        setStatus('docs-status', 'Indexed ' + r.pages_indexed + ' pages, ' + r.chunks + ' chunks' + skipped, 'ok');
+        return loadDocs();
+      })
+      .catch(function (e) { setStatus('docs-status', e.message, 'err'); })
+      .then(function () { $('crawl').disabled = false; });
+  });
+
+  /* ---- retrieval test ---- */
+  function doSearch() {
+    var q = $('q').value.trim();
+    if (!q) return;
+    $('answer-box').hidden = true;
+    setStatus('search-status', 'Retrieving…');
+    api('/rag/search?q=' + encodeURIComponent(q) + '&top_k=6').then(function (r) {
+      var used = r.hits.filter(function (h) { return h.used; }).length;
+      setStatus('search-status', r.hits.length + ' hits, ' + used + ' above threshold ' + r.threshold, used ? 'ok' : 'err');
+      $('hits').innerHTML = r.hits.map(function (h) {
+        return '<div class="chunk ' + (h.used ? 'used' : 'unused') + '"><div class="meta">' + h.score.toFixed(3) + ' · ' + esc(h.filename) + (h.used ? '' : ' · <span class="pill">not used</span>') + '</div>' + esc(h.text) + '</div>';
+      }).join('') || '<p class="hint">Nothing retrieved. Add a note below or upload a document that covers this.</p>';
+    }).catch(function (e) { setStatus('search-status', e.message, 'err'); });
+  }
+  $('search').addEventListener('click', doSearch);
+  $('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') doSearch(); });
+  $('answer').addEventListener('click', function () {
+    var q = $('q').value.trim();
+    if (!q) return;
+    $('answer').disabled = true; setStatus('search-status', 'Asking the model…');
+    fetch(API + '/chat/rag', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ site: state.site, session_id: 'console-' + Date.now(), messages: [{ role: 'user', content: q }], locale: /[一-鿿]/.test(q) ? 'zh' : 'en' })
+    }).then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status)); return d; }); })
+      .then(function (d) {
+        $('answer-box').hidden = false;
+        $('answer-text').textContent = d.reply;
+        $('answer-ctx').innerHTML = (d.context || []).map(function (c) {
+          return '<div class="chunk used"><div class="meta">' + Number(c.score).toFixed(3) + ' · ' + esc(c.filename) + '</div>' + esc(c.text) + '</div>';
+        }).join('') || '<p class="hint">The model answered from the prompt alone; no context was retrieved.</p>';
+        setStatus('search-status', 'Answer used ' + (d.context || []).length + ' context chunks', 'ok');
+      })
+      .catch(function (e) { setStatus('search-status', e.message, 'err'); })
+      .then(function () { $('answer').disabled = false; });
+  });
+
+  /* ---- notes ---- */
+  function loadNotes() {
+    return api('/rag/notes').then(function (r) { $('notes').value = r.text || ''; setStatus('notes-status', r.notes ? r.notes + ' notes indexed' : 'No notes yet'); });
+  }
+  $('save-notes').addEventListener('click', function () {
+    $('save-notes').disabled = true; setStatus('notes-status', 'Saving and indexing…');
+    json('PUT', '/rag/notes', { text: $('notes').value })
+      .then(function (r) { setStatus('notes-status', r.notes + ' notes indexed', 'ok'); return loadDocs(); })
+      .catch(function (e) { setStatus('notes-status', e.message, 'err'); })
+      .then(function () { $('save-notes').disabled = false; });
+  });
+
+  loadSites().then(function () { if (state.token) connect(); else setStatus('conn', 'Paste the admin token and connect'); });
+})();
+</script>
+</body>
+</html>

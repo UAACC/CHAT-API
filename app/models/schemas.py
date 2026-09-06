@@ -125,6 +125,47 @@ class CrawlResponse(BaseModel):
     skipped: list[dict] = Field(default_factory=list)
 
 
+class ChunkInfo(BaseModel):
+    """One stored chunk of a document."""
+
+    id: str
+    chunk_index: int
+    text: str
+    url: Optional[str] = None
+    title: Optional[str] = None
+
+
+class DocumentChunksResponse(BaseModel):
+    document_id: str
+    chunks: list[ChunkInfo] = Field(default_factory=list)
+
+
+class SearchHit(BaseModel):
+    """A retrieval-test hit."""
+
+    id: str
+    score: float
+    used: bool = Field(..., description="Clears the retrieval threshold")
+    document_id: str
+    filename: str
+    text: str
+
+
+class SearchResponse(BaseModel):
+    query: str
+    threshold: float
+    hits: list[SearchHit] = Field(default_factory=list)
+
+
+class NotesResponse(BaseModel):
+    text: str
+    notes: int
+
+
+class NotesUpdate(BaseModel):
+    text: str = Field("", max_length=100_000, description="Curated facts, one paragraph per note")
+
+
 class RAGContext(BaseModel):
     """Retrieved context information."""
 

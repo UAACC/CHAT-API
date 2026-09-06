@@ -31,6 +31,9 @@ and knowledge base, matched by the request's `Origin`.
 - **Optional knowledge base**: crawl the site itself or upload PDFs and
   Markdown, get retrieval-augmented answers via Pinecone's integrated
   embeddings; degrades gracefully when absent
+- **Knowledge console**: a page at `/admin` to read every stored chunk, test
+  what a question retrieves, check the answer, and add or correct facts as
+  notes that are live within seconds
 - **Cost protection out of the box**: per-IP rate limiting, input and
   conversation length limits, context truncation
 - **Small and testable**: FastAPI, ~2k lines, a test suite that runs offline
@@ -110,8 +113,10 @@ Sites with their own design can instead talk to the API directly; see
 | `POST /chat/stream` | Streaming chat (SSE events `token`, `done`, `error`) |
 | `POST /chat` | Same request, single JSON reply |
 | `GET /health` | Liveness and active provider |
+| `GET /admin` | Knowledge console (needs `ADMIN_TOKEN`) |
 | `POST /rag/crawl` | Build the knowledge base from a website (`{"url": "https://…"}`) |
-| `POST /rag/documents/upload`, `GET /rag/documents`, `DELETE /rag/documents/{id}` | Knowledge base management |
+| `POST /rag/documents/upload`, `GET /rag/documents`, `GET /rag/documents/{id}/chunks`, `DELETE /rag/documents/{id}` | Knowledge base management |
+| `GET /rag/search?q=`, `GET`/`PUT /rag/notes` | Retrieval test and curated notes |
 | `GET /docs` | Interactive OpenAPI docs |
 
 Request body:
@@ -166,14 +171,14 @@ Details: [deployments/README.md](deployments/README.md).
 | `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW` | `20` / `60` | Per-IP limit per window (s) |
 | `MAX_INPUT_LENGTH`, `MAX_MESSAGES_PER_SESSION`, `MAX_CONTEXT_MESSAGES` | `500`, `20`, `10` | Size limits |
 | `PINECONE_API_KEY`, `PINECONE_INDEX` | – | Turns on the knowledge base |
-| `ADMIN_TOKEN` | – | Bearer token required to upload, delete or crawl; open (with a warning) when unset |
+| `ADMIN_TOKEN` | – | Bearer token required by the knowledge-base endpoints and console; open (with a warning) when unset |
 
 Full reference: [docs/guide.md](docs/guide.md#configuration).
 
 ## Development
 
 ```bash
-pytest                      # 131 tests, no network, ~2 s
+pytest                      # 137 tests, no network, ~2 s
 docker build -t chat-api .  # what CI and Cloud Run build
 ```
 
@@ -188,7 +193,7 @@ app/
   services/            llm_service (providers, streaming), crawler, vector store, documents, storage
   middleware/          in-memory rate limiter (per tenant and IP)
   prompts/             generic default prompts
-  widget/              embeddable widget (widget.js) and demo page
+  widget/              embeddable widget (widget.js), demo page, knowledge console
 deployments/           tenants.yaml, shared env.yaml, knowledge base sources
 tests/                 pytest suite with a canned LLM
 docs/                  operator's guide and design specs
@@ -196,8 +201,8 @@ docs/                  operator's guide and design specs
 
 ## Roadmap
 
-- Knowledge-base console: see what the assistant knows, test retrieval,
-  curate answers
+- Conversation log with per-site analytics
+- Pluggable knowledge sources (Google Docs, Notion, scheduled re-crawls)
 
 ## License
 
