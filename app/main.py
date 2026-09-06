@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routes import health, chat, rag
+from app.routes import health, chat, rag, widget
 from app.tenants import TenantRegistry, build_registry
 
 settings = get_settings()
@@ -73,6 +73,7 @@ def create_app(registry: Optional[TenantRegistry] = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(chat.router)
     app.include_router(rag.router)
+    app.include_router(widget.router)
     return app
 
 

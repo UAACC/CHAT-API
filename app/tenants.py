@@ -147,13 +147,27 @@ class TenantRegistry:
             return tenant
 
         origin = request.headers.get("origin")
-        if origin:
+        if origin and not _same_host(origin, request):
             tenant = self.by_origin(origin)
             if tenant is None:
                 raise HTTPException(status_code=403, detail="origin not allowed")
             return tenant
 
         return self._default
+
+
+def _same_host(origin: str, request: Request) -> bool:
+    """
+    True when the Origin is the service itself (pages the API serves, such as
+    the widget demo). Compared by host only: behind a proxy the request may
+    be seen as http while the browser sent https.
+    """
+    try:
+        origin_host = urlsplit(origin).netloc.lower()
+    except ValueError:
+        return False
+    request_host = (request.headers.get("host") or request.url.netloc).lower()
+    return bool(origin_host) and origin_host == request_host
 
 
 def get_registry(request: Request) -> TenantRegistry:

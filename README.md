@@ -15,6 +15,9 @@ and knowledge base, matched by the request's `Origin`.
 
 ## Features
 
+- **One-tag widget**: `<script src="https://<service>/widget.js">` adds a
+  complete chat panel to any page; no build step, styles isolated in a
+  Shadow DOM, under 10 KB gzipped
 - **Streaming replies** over Server-Sent Events, with stop-on-disconnect so an
   abandoned tab does not keep burning tokens
 - **Multi-tenant**: one deployment serves many websites; a request is routed
@@ -77,10 +80,31 @@ docker run --rm -p 8080:8080 -e LLM_PROVIDER=gemini -e GEMINI_API_KEY=your-key c
 Gemini's free tier is enough for a small site; see the
 [operator's guide](docs/guide.md#llm-providers) for model notes.
 
+## Embedding the widget
+
+```html
+<script src="https://chat-api-204227115712.us-central1.run.app/widget.js"
+        data-title="Studio Assistant"
+        data-accent="#a8c686"
+        data-theme="dark"></script>
+```
+
+That is the whole integration. The widget streams replies, remembers the
+conversation, switches between English and Chinese, and adapts to phones.
+`data-*` attributes set the title, greeting, accent colour, theme
+(`dark` / `light` / `auto`), corner and initial language; `window.ChatWidget`
+exposes `open()`, `close()` and `send(text)` for your own buttons.
+
+Try it on the live demo:
+[chat-api-204227115712.us-central1.run.app/widget/demo](https://chat-api-204227115712.us-central1.run.app/widget/demo).
+Sites with their own design can instead talk to the API directly; see
+[Frontend integration](docs/guide.md#frontend-integration).
+
 ## API
 
 | Endpoint | Description |
 |----------|-------------|
+| `GET /widget.js`, `GET /widget/demo` | Embeddable widget and a demo page |
 | `POST /chat/stream` | Streaming chat (SSE events `token`, `done`, `error`) |
 | `POST /chat` | Same request, single JSON reply |
 | `GET /health` | Liveness and active provider |
@@ -143,7 +167,7 @@ Full reference: [docs/guide.md](docs/guide.md#configuration).
 ## Development
 
 ```bash
-pytest                      # 74 tests, no network, ~2 s
+pytest                      # 82 tests, no network, ~2 s
 docker build -t chat-api .  # what CI and Cloud Run build
 ```
 
@@ -158,6 +182,7 @@ app/
   services/            llm_service (providers, streaming), vector store, documents, storage
   middleware/          in-memory rate limiter (per tenant and IP)
   prompts/             generic default prompts
+  widget/              embeddable widget (widget.js) and demo page
 deployments/           tenants.yaml, shared env.yaml, knowledge base sources
 tests/                 pytest suite with a canned LLM
 docs/                  operator's guide and design specs
@@ -165,7 +190,6 @@ docs/                  operator's guide and design specs
 
 ## Roadmap
 
-- Embeddable widget served by the API (one `<script>` tag)
 - Website crawler to build the knowledge base from a URL
 - Provider fallback when the primary model is overloaded
 

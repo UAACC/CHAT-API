@@ -143,6 +143,41 @@ marketing site, not for billing-grade quotas.
 
 ## Frontend integration
 
+### The embeddable widget
+
+The quickest integration is the widget the API serves itself:
+
+```html
+<script src="https://<service>/widget.js"
+        data-title="Assistant"
+        data-greeting="Hello! How can we help?"
+        data-accent="#2563eb"
+        data-theme="auto"
+        data-position="right"
+        data-locale="en"></script>
+```
+
+| Attribute | Default | Meaning |
+|-----------|---------|---------|
+| `data-title` | `Assistant` | Panel header and the assistant's name on bubbles |
+| `data-greeting` | localized default | Empty-state text |
+| `data-accent` | `#2563eb` | Launcher and send-button colour; text colour is picked for contrast |
+| `data-theme` | `auto` | `dark`, `light`, or follow the visitor's system setting |
+| `data-position` | `right` | `right` or `left` corner |
+| `data-locale` | `en` | Initial language; the header toggle switches between `en` and `zh` |
+| `data-site` | – | Tenant id, only for pages whose origin is not a tenant origin (the demo page, local files) |
+| `data-api` | script origin | Override the API base URL |
+
+The widget keeps the conversation and language in `localStorage`, streams
+replies over SSE, offers Stop while streaming and Retry on failure, closes on
+`Esc`, and renders full-width on phones. Styles live in a Shadow DOM, so
+neither the page's CSS nor the widget's leaks. `window.ChatWidget` exposes
+`open()`, `close()`, `toggle()` and `send(text)`.
+
+`/widget.js` is served with a one-hour cache and an ETag; `/widget/demo` is a
+page that embeds it from the same service, useful for trying a tenant's
+prompt before wiring a site.
+
 ### Streaming endpoint
 
 `POST /chat/stream` with:

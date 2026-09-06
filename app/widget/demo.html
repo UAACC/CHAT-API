@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chat widget demo</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6;
+           background: #f6f7f9; color: #111827; }
+    @media (prefers-color-scheme: dark) { body { background: #0b0d12; color: #e5e7eb; } pre { background: #171a21 !important; } .card { background: #12151c !important; border-color: #262a33 !important; } }
+    main { max-width: 720px; margin: 0 auto; padding: 48px 24px 120px; }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    p.lead { color: #6b7280; margin-top: 0; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px 24px; margin: 24px 0; }
+    pre { background: #f3f4f6; padding: 14px 16px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    label { display: inline-flex; align-items: center; gap: 8px; margin-right: 16px; }
+    select, input[type=color] { font: inherit; }
+    button.demo { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #d1d5db; background: transparent; color: inherit; cursor: pointer; }
+    small { color: #6b7280; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Chat widget demo</h1>
+  <p class="lead">This page is served by the API itself and embeds the widget with one script tag.</p>
+
+  <div class="card">
+    <p>Pick a site to talk to. On a real website the tenant is inferred from the page's origin; here it is passed explicitly.</p>
+    <form id="opts" onsubmit="return false">
+      <label>Site <select id="site"></select></label>
+      <label>Theme <select id="theme"><option value="auto">auto</option><option value="dark">dark</option><option value="light">light</option></select></label>
+      <label>Accent <input id="accent" type="color" value="#2563eb"></label>
+      <button class="demo" id="apply">Apply</button>
+      <button class="demo" type="button" onclick="window.ChatWidget && window.ChatWidget.open()">Open widget</button>
+    </form>
+    <p><small>Applying reloads the page with the options in the URL.</small></p>
+  </div>
+
+  <div class="card">
+    <p>The tag this page is using:</p>
+    <pre><code id="snippet"></code></pre>
+    <p><small>Copy it into any page whose origin is listed for the site in <code>tenants.yaml</code>, drop <code>data-site</code>, and you are done.</small></p>
+  </div>
+
+  <div class="card">
+    <p>Try: ask what the organisation does, switch language with the button in the header, press Stop mid-answer, reload the page and see the conversation restored.</p>
+  </div>
+</main>
+
+<script>
+  (function () {
+    var params = new URLSearchParams(location.search);
+    var site = params.get('site') || '';
+    var theme = params.get('theme') || 'auto';
+    var accent = params.get('accent') || '#2563eb';
+    var origin = location.origin;
+
+    document.getElementById('theme').value = theme;
+    document.getElementById('accent').value = accent;
+
+    var siteSelect = document.getElementById('site');
+    fetch(origin + '/health').then(function (r) { return r.json(); }).then(function (h) {
+      (h.tenants || []).forEach(function (id) {
+        var o = document.createElement('option');
+        o.value = id; o.textContent = id; o.selected = id === site || (!site && id === (h.tenants || [])[0]);
+        siteSelect.appendChild(o);
+      });
+      if (!site && h.tenants && h.tenants.length) site = h.tenants[0];
+      mount();
+    }).catch(mount);
+
+    document.getElementById('apply').addEventListener('click', function () {
+      var q = new URLSearchParams({
+        site: siteSelect.value,
+        theme: document.getElementById('theme').value,
+        accent: document.getElementById('accent').value
+      });
+      location.search = q.toString();
+    });
+
+    function mount() {
+      var s = document.createElement('script');
+      s.src = origin + '/widget.js';
+      s.dataset.title = (site ? site + ' ' : '') + 'assistant';
+      s.dataset.theme = theme;
+      s.dataset.accent = accent;
+      if (site) s.dataset.site = site;
+      document.body.appendChild(s);
+
+      document.getElementById('snippet').textContent =
+        '<script src="' + origin + '/widget.js"\n' +
+        '        data-title="' + s.dataset.title + '"\n' +
+        '        data-theme="' + theme + '"\n' +
+        '        data-accent="' + accent + '"' +
+        (site ? '\n        data-site="' + site + '"' : '') + '><\/script>';
+    }
+  })();
+</script>
+</body>
+</html>
