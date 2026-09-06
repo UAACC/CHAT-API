@@ -94,8 +94,8 @@ async def search_by_text(
     settings = get_settings()
     index = get_index()
 
-    top_k = top_k or settings.rag_default_top_k
-    min_score = min_score or settings.rag_min_score_threshold
+    top_k = top_k if top_k is not None else settings.rag_default_top_k
+    min_score = min_score if min_score is not None else settings.rag_min_score_threshold
 
     # Build query with rerank for better results
     query_params = {
@@ -121,8 +121,9 @@ async def search_by_text(
         hits = results_dict.get('result', {}).get('hits', [])
 
         for hit in hits:
-            score = hit.get('_score', 0)
-            hit_id = hit.get('_id', '')
+            # pinecone<10 serialises hits as _id/_score, pinecone>=10 as id_/score_
+            score = hit.get('_score', hit.get('score_', 0)) or 0
+            hit_id = hit.get('_id') or hit.get('id_', '')
             fields = hit.get('fields', {})
 
             if score >= min_score:
