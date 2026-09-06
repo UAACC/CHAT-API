@@ -21,7 +21,15 @@ class TestWidgetScript:
 
     def test_size_budget(self, client):
         """Keep the widget small: it loads on every page of every site."""
-        assert len(client.get("/widget.js").content) < 40_000
+        raw = client.get("/widget.js", headers={"Accept-Encoding": "identity"})
+        assert "content-encoding" not in raw.headers
+        assert len(raw.content) < 40_000
+
+        gz = client.get("/widget.js", headers={"Accept-Encoding": "gzip"})
+        assert gz.headers["content-encoding"] == "gzip"
+        assert gz.headers["vary"] == "Accept-Encoding"
+        assert int(gz.headers["content-length"]) < 10_000
+        assert gz.text == raw.text  # the client transparently decompresses
 
     def test_hidden_from_openapi(self, client):
         paths = client.get("/openapi.json").json()["paths"]

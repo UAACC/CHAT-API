@@ -213,10 +213,16 @@
     });
   }
 
+  function link(url, label) {
+    return '<a href="' + url + '" target="_blank" rel="noopener noreferrer">' + label + '</a>';
+  }
+
   function format(text) {
     var html = esc(text);
     html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]])/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+    // [label](https://…) first, then bare URLs that are not already inside a tag
+    html = html.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, function (_, label, url) { return link(url, label); });
+    html = html.replace(/(^|[^"'>])(https?:\/\/[^\s<]+[^\s<.,;:!?)\]])/g, function (_, lead, url) { return lead + link(url, url); });
     return html;
   }
 
