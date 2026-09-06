@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="CHAT-API: a drop-in AI assistant backend for websites">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B1220"/>
+      <stop offset="1" stop-color="#111C33"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3B82F6" stop-opacity="0"/>
+      <stop offset=".5" stop-color="#3B82F6" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#3B82F6" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <path d="M30 0H0V30" fill="none" stroke="#1E293B" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="300" rx="18" fill="url(#bg)"/>
+  <rect width="1200" height="300" rx="18" fill="url(#grid)" opacity=".7"/>
+  <rect x="0" y="298" width="1200" height="2" fill="url(#glow)"/>
+
+  <!-- mark -->
+  <rect x="72" y="92" width="72" height="72" rx="18" fill="#3B82F6"/>
+  <path d="M108 104c-15.5 0-28 10.7-28 24 0 5.1 1.8 9.8 5 13.7L80 156l14.6-4.7c4 1.7 8.6 2.7 13.4 2.7 15.5 0 28-10.7 28-24s-12.5-24-28-24z" fill="none" stroke="#fff" stroke-width="4.5" stroke-linejoin="round"/>
+  <circle cx="98" cy="128" r="2.6" fill="#fff"/><circle cx="108" cy="128" r="2.6" fill="#fff"/><circle cx="118" cy="128" r="2.6" fill="#fff"/>
+
+  <!-- title -->
+  <text x="170" y="122" font-family="'IBM Plex Sans','Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="52" font-weight="700" fill="#F1F5F9" letter-spacing="-1">CHAT-API</text>
+  <text x="170" y="158" font-family="'IBM Plex Sans','Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="21" fill="#94A3B8">A drop-in AI assistant backend for websites</text>
+
+  <!-- chips -->
+  <g font-family="'JetBrains Mono','SFMono-Regular',Menlo,Consolas,monospace" font-size="13.5" fill="#CBD5E1">
+    <rect x="170" y="184" width="150" height="30" rx="15" fill="#172033" stroke="#334155"/><text x="245" y="204" text-anchor="middle">one-tag widget</text>
+    <rect x="330" y="184" width="130" height="30" rx="15" fill="#172033" stroke="#334155"/><text x="395" y="204" text-anchor="middle">multi-tenant</text>
+    <rect x="470" y="184" width="150" height="30" rx="15" fill="#172033" stroke="#334155"/><text x="545" y="204" text-anchor="middle">SSE streaming</text>
+    <rect x="630" y="184" width="200" height="30" rx="15" fill="#172033" stroke="#334155"/><text x="730" y="204" text-anchor="middle">crawl → knowledge base</text>
+    <rect x="840" y="184" width="176" height="30" rx="15" fill="#172033" stroke="#334155"/><text x="928" y="204" text-anchor="middle">provider fallback</text>
+  </g>
+
+  <!-- code card -->
+  <g transform="translate(870 56)">
+    <rect width="270" height="96" rx="12" fill="#0F172A" stroke="#334155"/>
+    <circle cx="18" cy="18" r="4" fill="#EF4444"/><circle cx="32" cy="18" r="4" fill="#F59E0B"/><circle cx="46" cy="18" r="4" fill="#22C55E"/>
+    <g font-family="'JetBrains Mono','SFMono-Regular',Menlo,Consolas,monospace" font-size="12.5">
+      <text x="16" y="48" fill="#94A3B8">&lt;<tspan fill="#60A5FA">script</tspan> <tspan fill="#A5B4FC">src</tspan>=<tspan fill="#86EFAC">"https://…/widget.js"</tspan></text>
+      <text x="16" y="68" fill="#94A3B8">        <tspan fill="#A5B4FC">data-title</tspan>=<tspan fill="#86EFAC">"Assistant"</tspan>&gt;</text>
+      <text x="16" y="86" fill="#94A3B8">&lt;/<tspan fill="#60A5FA">script</tspan>&gt;</text>
+    </g>
+  </g>
+</svg>

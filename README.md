@@ -1,43 +1,73 @@
-# CHAT-API
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="CHAT-API: a drop-in AI assistant backend for websites" width="100%">
+</p>
 
-[![CI](https://github.com/UAACC/CHAT-API/actions/workflows/ci.yml/badge.svg)](https://github.com/UAACC/CHAT-API/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+<p align="center">
+  <a href="https://github.com/UAACC/CHAT-API/actions/workflows/ci.yml"><img src="https://github.com/UAACC/CHAT-API/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/tests-137%20passing-22c55e" alt="137 tests">
+  <img src="https://img.shields.io/badge/widget-6.5%20KB%20gzipped-3b82f6" alt="widget 6.5 KB gzipped">
+  <img src="https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white" alt="Python 3.11+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT"></a>
+  <a href="https://chat-api-204227115712.us-central1.run.app/widget/demo"><img src="https://img.shields.io/badge/live%20demo-Cloud%20Run-0f172a?logo=googlecloud&logoColor=white" alt="Live demo"></a>
+</p>
 
-A drop-in AI assistant backend for websites. Point a chat widget at it, give it
-a system prompt that describes your organisation, and visitors get streamed,
-bilingual answers with guard-rails against made-up prices and runaway costs.
+<p align="center">
+  <a href="https://chat-api-204227115712.us-central1.run.app/widget/demo"><b>Live demo</b></a> ·
+  <a href="https://chat-api-204227115712.us-central1.run.app/admin"><b>Knowledge console</b></a> ·
+  <a href="docs/guide.md"><b>Operator's guide</b></a> ·
+  <a href="deployments/README.md"><b>Deploy</b></a> ·
+  <a href="CHANGELOG.md"><b>Changelog</b></a>
+</p>
+
+Give it a system prompt that describes your organisation, add one script tag
+to your site, and visitors get streamed, bilingual answers with guard-rails
+against made-up prices and runaway costs. One deployment serves many sites.
 
 It runs the assistants on [allisonhe.ca](https://allisonhe.ca) (a children's
 art studio) and [orctech.ca](https://orctech.ca) (a technology consultancy)
-from one Cloud Run service: each site is a tenant with its own prompts, model
-and knowledge base, matched by the request's `Origin`.
+from a single Cloud Run service.
+
+<p align="center">
+  <img src="docs/assets/widget-demo.gif" alt="The widget opening on a page, receiving a question and streaming an answer" width="100%">
+</p>
 
 ## Features
 
-- **One-tag widget**: `<script src="https://<service>/widget.js">` adds a
-  complete chat panel to any page; no build step, styles isolated in a
-  Shadow DOM, under 10 KB gzipped
-- **Streaming replies** over Server-Sent Events, with stop-on-disconnect so an
-  abandoned tab does not keep burning tokens
-- **Multi-tenant**: one deployment serves many websites; a request is routed
-  to its site by `Origin`, each site with its own prompts, model, limits and
-  knowledge-base namespace
-- **Pluggable providers with fallback**: Google Gemini, OpenAI and Anthropic
-  through LangChain; each site lists a primary model and backups that take
-  over when the primary is overloaded, rate limited or out of credit
-- **Prompt-first configuration**: site knowledge lives in a YAML file,
-  never in code; English and Chinese prompts selected per request
-- **Optional knowledge base**: crawl the site itself or upload PDFs and
-  Markdown, get retrieval-augmented answers via Pinecone's integrated
-  embeddings; degrades gracefully when absent
-- **Knowledge console**: a page at `/admin` to read every stored chunk, test
-  what a question retrieves, check the answer, and add or correct facts as
-  notes that are live within seconds
-- **Cost protection out of the box**: per-IP rate limiting, input and
-  conversation length limits, context truncation
-- **Small and testable**: FastAPI, ~2k lines, a test suite that runs offline
-  in two seconds, one Dockerfile
+| | |
+|---|---|
+| **One-tag widget** | `<script src="https://<service>/widget.js">` adds a complete chat panel: streaming, stop, retry, EN/中文 toggle, persistence, dark/light themes. No build step, styles isolated in a Shadow DOM, 6.5 KB gzipped. |
+| **Multi-tenant** | Each site is a tenant with its own prompts, model, limits and knowledge-base namespace, matched by the request's `Origin`. Add a site by adding a YAML block. |
+| **Streaming with cost guards** | Server-Sent Events token by token; generation stops when the tab closes. Per-tenant, per-IP rate limiting, input and history limits, context truncation. |
+| **Providers with fallback** | Google Gemini, OpenAI and Anthropic through LangChain. A site lists backup models that take over when the primary is overloaded, rate limited or out of credit. |
+| **Knowledge base from the website** | `POST /rag/crawl` fetches the site, extracts readable text and indexes one document per page. Upload PDFs and Markdown too. Retrieval degrades gracefully when absent. |
+| **Knowledge console** | Read every stored chunk, see what a question retrieves with scores against the threshold, check the answer with its context, and add facts as notes that are live within seconds. |
+| **Small and tested** | FastAPI, ~2.3k lines, 137 tests that run offline in two seconds, one Dockerfile, CI with a container smoke test. |
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/console-documents.png" alt="Knowledge console: documents and their chunks"><br><sub><b>Console · Documents</b>: every chunk exactly as stored, with source and size.</sub></td>
+    <td width="50%"><img src="docs/assets/console-retrieval.png" alt="Knowledge console: retrieval test with similarity scores"><br><sub><b>Console · Retrieval test</b>: what a question pulls in, scored against the threshold.</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/assets/widget-light.png" alt="The embeddable widget on the demo page, light theme with a custom accent"><br><sub><b>Widget</b> on the demo page, light theme with the site's accent colour; the answer cites the knowledge base.</sub></td>
+  </tr>
+</table>
+
+## By the numbers
+
+| Metric | Value | How measured |
+|--------|-------|--------------|
+| Time to first token | **0.97 s** median (warm) | 5 streamed requests against production, Gemini Flash-Lite |
+| Widget payload | **6.5 KB** gzipped, 19 KB raw | `curl -H 'Accept-Encoding: gzip' /widget.js` |
+| Test suite | **137** cases, **~2 s**, no network | `pytest -q` |
+| Application code | **2,273** lines of Python | non-blank lines under `app/` |
+| Endpoints | **14** | `/openapi.json` |
+| Sites in production | **2** on one service | `GET /health` |
+
+Cold starts on a scaled-to-zero Cloud Run instance add several seconds to the
+first request; `--min-instances 1` removes them.
 
 ## How it works
 
@@ -46,16 +76,38 @@ flowchart LR
     W1[Widget on site A] -- "POST /chat/stream<br/>Origin: a.example" --> A[CHAT-API<br/>FastAPI on Cloud Run]
     W2[Widget on site B] -- "POST /chat/stream<br/>Origin: b.example" --> A
     A -- "resolve tenant · rate limit<br/>validate · truncate" --> A
-    A -. "optional: search<br/>tenant namespace" .-> P[(Pinecone<br/>knowledge base)]
-    A -- "tenant prompt + context + history" --> L[LLM provider<br/>Gemini · OpenAI · Anthropic]
+    A -. "search tenant namespace" .-> P[(Pinecone<br/>knowledge base)]
+    A -- "tenant prompt + context + history" --> L[Primary model]
+    L -. "overloaded / rate limited" .-> F[Fallback model]
     L -- "token stream" --> A
+    F -- "token stream" --> A
     A -- "SSE: token … done" --> W1
 ```
 
-Every request is matched to its site, checked against that site's rate limit
-and size limits, trimmed to the last N messages, optionally enriched with
-context from the site's knowledge base, and sent to the site's model. Tokens
-are relayed to the browser as they arrive.
+One request, end to end:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Browser (widget)
+    participant S as CHAT-API
+    participant V as Pinecone
+    participant M as Model
+
+    B->>S: POST /chat/stream {messages, locale} + Origin
+    S->>S: tenant by Origin · rate limit · size limits · keep last N messages
+    opt tenant has a knowledge base
+        S->>V: search(question, namespace=tenant)
+        V-->>S: top chunks with scores
+    end
+    S->>M: system prompt + retrieved context + history
+    alt model fails before any text
+        S->>M: same request to the next model in the chain
+    end
+    M-->>S: tokens
+    S-->>B: event: token … event: done
+    Note over B,S: closing the tab aborts the request; generation stops
+```
 
 ## Quick start
 
@@ -82,7 +134,8 @@ docker build -t chat-api .
 docker run --rm -p 8080:8080 -e LLM_PROVIDER=gemini -e GEMINI_API_KEY=your-key chat-api
 ```
 
-Gemini's free tier is enough for a small site; see the
+Open `http://localhost:8080/widget/demo` to chat, and `/admin` for the
+console. Gemini's free tier is enough for a small site; see the
 [operator's guide](docs/guide.md#llm-providers) for model notes.
 
 ## Embedding the widget
@@ -94,44 +147,11 @@ Gemini's free tier is enough for a small site; see the
         data-theme="dark"></script>
 ```
 
-That is the whole integration. The widget streams replies, remembers the
-conversation, switches between English and Chinese, and adapts to phones.
-`data-*` attributes set the title, greeting, accent colour, theme
-(`dark` / `light` / `auto`), corner and initial language; `window.ChatWidget`
-exposes `open()`, `close()` and `send(text)` for your own buttons.
-
-Try it on the live demo:
-[chat-api-204227115712.us-central1.run.app/widget/demo](https://chat-api-204227115712.us-central1.run.app/widget/demo).
-Sites with their own design can instead talk to the API directly; see
-[Frontend integration](docs/guide.md#frontend-integration).
-
-## API
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /widget.js`, `GET /widget/demo` | Embeddable widget and a demo page |
-| `POST /chat/stream` | Streaming chat (SSE events `token`, `done`, `error`) |
-| `POST /chat` | Same request, single JSON reply |
-| `GET /health` | Liveness and active provider |
-| `GET /admin` | Knowledge console (needs `ADMIN_TOKEN`) |
-| `POST /rag/crawl` | Build the knowledge base from a website (`{"url": "https://…"}`) |
-| `POST /rag/documents/upload`, `GET /rag/documents`, `GET /rag/documents/{id}/chunks`, `DELETE /rag/documents/{id}` | Knowledge base management |
-| `GET /rag/search?q=`, `GET`/`PUT /rag/notes` | Retrieval test and curated notes |
-| `GET /docs` | Interactive OpenAPI docs |
-
-Request body:
-
-```json
-{
-  "session_id": "1736789012345-a8b3c9d",
-  "messages": [{ "role": "user", "content": "Do you offer trial classes?" }],
-  "locale": "en",
-  "page_url": "https://example.com/programs"
-}
-```
-
-A complete browser client is ~40 lines; see
-[Frontend integration](docs/guide.md#frontend-integration).
+That is the whole integration. `data-*` attributes set the title, greeting,
+accent colour, theme (`dark` / `light` / `auto`), corner and initial
+language; `window.ChatWidget` exposes `open()`, `close()` and `send(text)`
+for your own buttons. Sites with their own design can talk to the API
+directly; see [Frontend integration](docs/guide.md#frontend-integration).
 
 ## Adding a site
 
@@ -154,9 +174,33 @@ tenants:
 Put the key in Secret Manager, mount it as `MY_SITE_GEMINI_API_KEY`, redeploy,
 and point the site's widget at the service URL. Requests are routed by
 `Origin`; a single-site deployment can skip the file entirely and configure
-everything with environment variables.
+everything with environment variables. Details in
+[deployments/README.md](deployments/README.md).
 
-Details: [deployments/README.md](deployments/README.md).
+## API
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /chat/stream` | Streaming chat (SSE events `token`, `done`, `error`) |
+| `POST /chat` | Same request, single JSON reply |
+| `GET /widget.js`, `GET /widget/demo` | Embeddable widget and a demo page |
+| `GET /admin` | Knowledge console (needs `ADMIN_TOKEN`) |
+| `POST /rag/crawl` | Build the knowledge base from a website |
+| `POST /rag/documents/upload`, `GET /rag/documents`, `GET /rag/documents/{id}/chunks`, `DELETE /rag/documents/{id}` | Knowledge base management |
+| `GET /rag/search?q=`, `GET`/`PUT /rag/notes` | Retrieval test and curated notes |
+| `GET /health`, `GET /rag/status` | Liveness, tenants, storage and vector-store connectivity |
+| `GET /docs` | Interactive OpenAPI docs |
+
+Request body:
+
+```json
+{
+  "session_id": "1736789012345-a8b3c9d",
+  "messages": [{ "role": "user", "content": "Do you offer trial classes?" }],
+  "locale": "en",
+  "page_url": "https://example.com/programs"
+}
+```
 
 ## Configuration
 
@@ -175,29 +219,45 @@ Details: [deployments/README.md](deployments/README.md).
 
 Full reference: [docs/guide.md](docs/guide.md#configuration).
 
+## How it compares
+
+| | Hand-rolled `fetch` to a model | Hosted chatbot SaaS | CHAT-API |
+|---|:---:|:---:|:---:|
+| Runs on your infrastructure, your keys | ✓ | – | ✓ |
+| Streaming with stop-on-disconnect | build it | ✓ | ✓ |
+| Rate limits and size limits | build it | ✓ | ✓ |
+| Many sites from one deployment | build it | per-seat pricing | ✓ |
+| Knowledge base from the site itself | build it | ✓ | ✓ |
+| See what the bot knows and test retrieval | – | sometimes | ✓ |
+| Model fallback across providers | build it | – | ✓ |
+| Widget you can restyle or replace | – | limited | ✓ |
+| Cost for a small site | model usage | subscription | model usage (free tier works) |
+
 ## Development
 
 ```bash
-pytest                      # 137 tests, no network, ~2 s
+pytest -q                   # 137 tests, no network, ~2 s
 docker build -t chat-api .  # what CI and Cloud Run build
 ```
-
-Layout:
 
 ```
 app/
   main.py              app factory, CORS, lifespan
   config.py            shared settings (pydantic-settings)
   tenants.py           tenant model, YAML loader, per-request resolution
-  routes/              chat, health, rag endpoints
-  services/            llm_service (providers, streaming), crawler, vector store, documents, storage
+  routes/              chat, health, rag, widget endpoints
+  services/            llm_service (providers, streaming, fallback), crawler, vector store, documents, storage
   middleware/          in-memory rate limiter (per tenant and IP)
   prompts/             generic default prompts
   widget/              embeddable widget (widget.js), demo page, knowledge console
 deployments/           tenants.yaml, shared env.yaml, knowledge base sources
 tests/                 pytest suite with a canned LLM
-docs/                  operator's guide and design specs
+docs/                  operator's guide, design specs, assets
 ```
+
+Design notes for each subsystem are in [docs/specs](docs/specs). See
+[CONTRIBUTING.md](CONTRIBUTING.md) to get involved and
+[SECURITY.md](SECURITY.md) for the threat model.
 
 ## Roadmap
 
