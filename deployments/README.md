@@ -6,7 +6,7 @@ from Secret Manager. Nothing secret is committed.
 
 | File | Contents |
 |------|----------|
-| `tenants.yaml` | One entry per site: name, origins, model, prompts, knowledge-base namespace, limit overrides |
+| `tenants.yaml` | One entry per site: name, origins, model and fallback models, prompts, knowledge-base namespace, limit overrides |
 | `env.yaml` | Shared settings: `TENANTS_FILE`, rate-limit window, context limits, Pinecone index, GCS bucket |
 | `ah-studio/knowledge_base.md` | Source document for the A.H. Studio knowledge base (uploaded, not read at runtime) |
 

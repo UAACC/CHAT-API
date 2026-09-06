@@ -68,7 +68,7 @@ def fake_llm(monkeypatch):
 
     def _install(reply: str = "Hello from the assistant."):
         model = FakeListChatModel(responses=[reply])
-        monkeypatch.setattr(llm_service, "get_llm", lambda tenant=None: model)
+        monkeypatch.setattr(llm_service, "get_llm", lambda tenant=None, candidate=0: model)
         return model
 
     return _install

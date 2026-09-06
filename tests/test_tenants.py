@@ -136,7 +136,7 @@ def per_tenant_llm(monkeypatch):
     """A canned model per tenant, so replies reveal which tenant answered."""
     models = {}
 
-    def fake_get_llm(tenant):
+    def fake_get_llm(tenant, candidate=0):
         if tenant.id not in models:
             models[tenant.id] = FakeListChatModel(responses=[f"reply from {tenant.id}"] * 10)
         return models[tenant.id]

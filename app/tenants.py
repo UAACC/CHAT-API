@@ -55,9 +55,15 @@ class Tenant(BaseModel):
     name: str
     origins: list[str] = Field(default_factory=list)
     llm: LlmConfig
+    fallbacks: list[LlmConfig] = Field(default_factory=list)
     prompts: dict[str, str] = Field(default_factory=dict)
     knowledge_base: Optional[KnowledgeBaseConfig] = None
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
+
+    @property
+    def llm_candidates(self) -> list[LlmConfig]:
+        """Primary model first, then fallbacks in order."""
+        return [self.llm, *self.fallbacks]
 
     @field_validator("origins")
     @classmethod
@@ -214,7 +220,8 @@ def load_tenants_file(path: str | Path, settings: Optional[Settings] = None) -> 
             tenant = Tenant(**spec)
         except Exception as e:  # pydantic ValidationError or ValueError
             raise ValueError(f"{path}: tenant {tenant_id!r} is invalid: {e}") from e
-        _resolve_api_key(tenant.id, tenant.llm)
+        for candidate in tenant.llm_candidates:
+            _resolve_api_key(tenant.id, candidate)
         if tenant.knowledge_base and tenant.knowledge_base.storage_prefix is None:
             tenant.knowledge_base.storage_prefix = f"{settings.gcs_prefix}/{tenant.id}"
         tenants.append(tenant)

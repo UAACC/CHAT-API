@@ -54,7 +54,7 @@ class TestSameHostOrigin:
 
         seen = []
 
-        def fake(tenant):
+        def fake(tenant, candidate=0):
             seen.append(tenant.id)
             return FakeListChatModel(responses=["ok"])
 
@@ -69,7 +69,7 @@ class TestSameHostOrigin:
 
         seen = []
 
-        def fake(tenant):
+        def fake(tenant, candidate=0):
             seen.append(tenant.id)
             return FakeListChatModel(responses=["ok"])
 

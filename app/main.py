@@ -32,10 +32,8 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.app_name} ({settings.app_env})")
     for tenant in registry.tenants:
         kb = tenant.knowledge_base.namespace if tenant.knowledge_base else "none"
-        logger.info(
-            f"Tenant {tenant.id}: {tenant.llm.provider}/{tenant.llm.model}, "
-            f"origins={tenant.origins}, knowledge_base={kb}"
-        )
+        chain = " -> ".join(f"{c.provider}/{c.model}" for c in tenant.llm_candidates)
+        logger.info(f"Tenant {tenant.id}: {chain}, origins={tenant.origins}, knowledge_base={kb}")
     if not settings.admin_token:
         logger.warning("ADMIN_TOKEN is not set: knowledge-base upload, delete and crawl endpoints are open")
     if settings.pinecone_api_key:

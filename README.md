@@ -23,8 +23,9 @@ and knowledge base, matched by the request's `Origin`.
 - **Multi-tenant**: one deployment serves many websites; a request is routed
   to its site by `Origin`, each site with its own prompts, model, limits and
   knowledge-base namespace
-- **Pluggable providers**: Google Gemini, OpenAI and Anthropic through
-  LangChain; per site, switch with one line
+- **Pluggable providers with fallback**: Google Gemini, OpenAI and Anthropic
+  through LangChain; each site lists a primary model and backups that take
+  over when the primary is overloaded, rate limited or out of credit
 - **Prompt-first configuration**: site knowledge lives in a YAML file,
   never in code; English and Chinese prompts selected per request
 - **Optional knowledge base**: crawl the site itself or upload PDFs and
@@ -137,6 +138,8 @@ tenants:
     name: My Site
     origins: [https://my-site.example, https://www.my-site.example]
     llm: { provider: gemini, model: gemini-3.1-flash-lite, api_key_env: MY_SITE_GEMINI_API_KEY }
+    fallbacks:
+      - { provider: gemini, model: gemini-3.5-flash-lite, api_key_env: MY_SITE_GEMINI_API_KEY }
     prompts:
       en: |
         You are the assistant for My Site. ...
@@ -170,7 +173,7 @@ Full reference: [docs/guide.md](docs/guide.md#configuration).
 ## Development
 
 ```bash
-pytest                      # 109 tests, no network, ~2 s
+pytest                      # 131 tests, no network, ~2 s
 docker build -t chat-api .  # what CI and Cloud Run build
 ```
 
@@ -193,7 +196,8 @@ docs/                  operator's guide and design specs
 
 ## Roadmap
 
-- Provider fallback when the primary model is overloaded
+- Knowledge-base console: see what the assistant knows, test retrieval,
+  curate answers
 
 ## License
 

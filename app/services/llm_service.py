@@ -71,13 +71,43 @@ def build_llm(config: LlmConfig) -> BaseChatModel:
     raise ValueError(f"Unsupported LLM provider: {config.provider}")
 
 
-def get_llm(tenant: Tenant) -> BaseChatModel:
-    """The tenant's chat model, built on first use and cached."""
-    llm = _llm_cache.get(tenant.id)
+def get_llm(tenant: Tenant, candidate: int = 0) -> BaseChatModel:
+    """The tenant's chat model (primary or a fallback), built on first use and cached."""
+    key = f"{tenant.id}#{candidate}"
+    llm = _llm_cache.get(key)
     if llm is None:
-        llm = build_llm(tenant.llm)
-        _llm_cache[tenant.id] = llm
+        llm = build_llm(tenant.llm_candidates[candidate])
+        _llm_cache[key] = llm
     return llm
+
+
+_FALLBACK_STATUSES = {408, 409, 425, 429, 500, 502, 503, 504}
+_FALLBACK_MARKERS = (
+    "rate limit", "ratelimit", "resource_exhausted", "quota", "credit",
+    "overloaded", "unavailable", "high demand", "not found", "no longer available",
+    "internal server", "server error", "timeout", "timed out", "connection",
+    "503", "502", "504", "429",
+)
+
+
+def should_fall_back(error: BaseException) -> bool:
+    """
+    Would a different model plausibly succeed?
+
+    True for overload, rate limits, exhausted quota or credit, withdrawn
+    models, upstream 5xx and connection failures. False for errors a second
+    model would repeat: invalid requests, content policy, authentication.
+    """
+    status = getattr(error, "status_code", None) or getattr(error, "code", None)
+    if isinstance(status, int):
+        if status in _FALLBACK_STATUSES:
+            return True
+        if status in (400, 401, 403, 422):
+            return False
+    haystack = f"{type(error).__name__} {error}".lower()
+    if any(word in haystack for word in ("invalid_argument", "permission_denied", "unauthenticated", "api key not valid", "invalid api key", "content policy", "safety")):
+        return False
+    return any(marker in haystack for marker in _FALLBACK_MARKERS)
 
 
 def chunk_text(chunk) -> str:
@@ -147,15 +177,29 @@ async def generate_response(
     tenant: Tenant,
     context_chunks: Optional[list[dict]] = None,
 ) -> str:
-    """Complete (non-streaming) reply."""
-    llm = get_llm(tenant)
+    """Complete (non-streaming) reply, trying fallback models on retryable failures."""
     langchain_messages = build_langchain_messages(messages, locale, tenant, context_chunks)
     logger.info(
         f"Generating response: tenant={tenant.id}, messages={len(messages)}, "
         f"context={len(context_chunks or [])}"
     )
-    response = await llm.ainvoke(langchain_messages)
-    return chunk_text(response)
+    candidates = tenant.llm_candidates
+    for index, config in enumerate(candidates):
+        try:
+            response = await get_llm(tenant, index).ainvoke(langchain_messages)
+            return chunk_text(response)
+        except Exception as error:
+            if index == len(candidates) - 1 or not should_fall_back(error):
+                raise
+            _log_fallback(tenant, config, candidates[index + 1], error)
+    raise RuntimeError("no model candidates configured")
+
+
+def _log_fallback(tenant: Tenant, failed: LlmConfig, next_config: LlmConfig, error: BaseException) -> None:
+    logger.warning(
+        f"tenant={tenant.id} fell back from {failed.provider}/{failed.model} "
+        f"to {next_config.provider}/{next_config.model}: {type(error).__name__}: {str(error)[:200]}"
+    )
 
 
 async def generate_response_stream(
@@ -164,14 +208,29 @@ async def generate_response_stream(
     tenant: Tenant,
     context_chunks: Optional[list[dict]] = None,
 ) -> AsyncGenerator[str, None]:
-    """Streaming reply, yielding text as it arrives."""
-    llm = get_llm(tenant)
+    """
+    Streaming reply, yielding text as it arrives.
+
+    Falls back to the next configured model when the current one fails before
+    producing any text. Once text has been streamed the request stays on that
+    model, so a reply is never spliced from two models.
+    """
     langchain_messages = build_langchain_messages(messages, locale, tenant, context_chunks)
     logger.info(
         f"Streaming response: tenant={tenant.id}, messages={len(messages)}, "
         f"context={len(context_chunks or [])}"
     )
-    async for chunk in llm.astream(langchain_messages):
-        text = chunk_text(chunk)
-        if text:
-            yield text
+    candidates = tenant.llm_candidates
+    for index, config in enumerate(candidates):
+        produced = False
+        try:
+            async for chunk in get_llm(tenant, index).astream(langchain_messages):
+                text = chunk_text(chunk)
+                if text:
+                    produced = True
+                    yield text
+            return
+        except Exception as error:
+            if produced or index == len(candidates) - 1 or not should_fall_back(error):
+                raise
+            _log_fallback(tenant, config, candidates[index + 1], error)

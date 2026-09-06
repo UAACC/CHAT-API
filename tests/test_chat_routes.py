@@ -56,7 +56,7 @@ class TestStreaming:
     async def test_llm_failure_becomes_error_event(self, async_client, monkeypatch):
         from app.services import llm_service
 
-        def boom(tenant=None):
+        def boom(tenant=None, candidate=0):
             raise RuntimeError("provider exploded")
 
         monkeypatch.setattr(llm_service, "get_llm", boom)

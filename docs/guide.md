@@ -113,6 +113,25 @@ if your widget renders plain text).
 configured provider. Adding one is three edits: extend the `Literal` in
 `config.py`, add the key and model settings, add a branch in `get_llm()`.
 
+### Fallback chain
+
+A tenant can list backup models:
+
+```yaml
+llm:       { provider: gemini, model: gemini-3.1-flash-lite, api_key_env: SITE_GEMINI_API_KEY }
+fallbacks:
+  - { provider: gemini, model: gemini-3.5-flash-lite, api_key_env: SITE_GEMINI_API_KEY }
+  - { provider: openai, model: gpt-4o-mini, api_key_env: SITE_OPENAI_API_KEY, max_tokens: 1024 }
+```
+
+Candidates are tried in order. A model is skipped when it fails before
+producing any text with an error a different model could avoid: overload
+(503), rate limits (429), exhausted quota or credit, a withdrawn model,
+upstream 5xx, connection failures. Invalid requests, content-policy blocks
+and bad keys are not retried. Once a reply has started streaming it stays on
+that model. Each fallback logs
+`tenant=<id> fell back from <provider>/<model> to <provider>/<model>`.
+
 Notes from production:
 
 - Gemini Flash-Lite models do not "think" by default, so `MAX_TOKENS=512` is

@@ -17,6 +17,15 @@ tenants:
       model: gemini-3.1-flash-lite
       api_key_env: AH_STUDIO_GEMINI_API_KEY
       max_tokens: 512
+    fallbacks:
+    - provider: gemini
+      model: gemini-3.5-flash-lite
+      api_key_env: AH_STUDIO_GEMINI_API_KEY
+      max_tokens: 512
+    - provider: gemini
+      model: gemini-3.5-flash
+      api_key_env: AH_STUDIO_GEMINI_API_KEY
+      max_tokens: 2048
     prompts:
       en: |
         You are the friendly AI assistant for A.H. Studio, Edmonton's premier children's art education studio located in Alberta, Canada.
@@ -152,6 +161,15 @@ tenants:
       model: gemini-3.1-flash-lite
       api_key_env: ORCTECH_GEMINI_API_KEY
       max_tokens: 512
+    fallbacks:
+    - provider: gemini
+      model: gemini-3.5-flash-lite
+      api_key_env: ORCTECH_GEMINI_API_KEY
+      max_tokens: 512
+    - provider: gemini
+      model: gemini-3.5-flash
+      api_key_env: ORCTECH_GEMINI_API_KEY
+      max_tokens: 2048
     knowledge_base:
       namespace: orctech
     prompts:
