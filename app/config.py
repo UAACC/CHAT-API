@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     # Unset = one implicit tenant built from the variables below.
     tenants_file: Optional[str] = None
 
+    # Bearer token required by endpoints that change a knowledge base
+    # (upload, delete, crawl). Unset = open, with a startup warning.
+    admin_token: str = ""
+
     # LLM Provider Configuration
     llm_provider: Literal["openai", "anthropic", "gemini"] = "openai"
     openai_api_key: str = ""

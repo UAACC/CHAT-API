@@ -99,6 +99,32 @@ class RAGChatRequest(ChatRequest):
     min_score: float = Field(0.1, description="Minimum similarity score", ge=0.0, le=1.0)
 
 
+class CrawlRequest(BaseModel):
+    """Request body for the site crawl endpoint."""
+
+    url: str = Field(..., description="Start URL; only this host is crawled")
+    max_pages: int = Field(30, ge=1, le=200, description="Stop after this many indexed pages")
+    max_depth: int = Field(3, ge=0, le=6, description="Link distance from the start page")
+
+
+class CrawledPage(BaseModel):
+    url: str
+    title: str
+    document_id: str
+    chunks: int
+
+
+class CrawlResponse(BaseModel):
+    """Summary of a site crawl."""
+
+    site: str
+    start_url: str
+    pages_indexed: int
+    chunks: int
+    pages: list[CrawledPage] = Field(default_factory=list)
+    skipped: list[dict] = Field(default_factory=list)
+
+
 class RAGContext(BaseModel):
     """Retrieved context information."""
 

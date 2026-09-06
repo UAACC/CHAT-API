@@ -21,8 +21,12 @@ From the repository root:
 gcloud run deploy chat-api \
   --project=ah-studio-chat --region=us-central1 --source=. --allow-unauthenticated \
   --env-vars-file=deployments/env.yaml \
-  --update-secrets="AH_STUDIO_GEMINI_API_KEY=gemini-api-key:latest,ORCTECH_GEMINI_API_KEY=orctech-gemini-api-key:latest,PINECONE_API_KEY=pinecone-api-key:latest"
+  --update-secrets="AH_STUDIO_GEMINI_API_KEY=gemini-api-key:latest,ORCTECH_GEMINI_API_KEY=orctech-gemini-api-key:latest,PINECONE_API_KEY=pinecone-api-key:latest,ADMIN_TOKEN=admin-token:latest"
 ```
+
+`ADMIN_TOKEN` (Secret Manager secret `admin-token`) protects the endpoints
+that change a knowledge base. Read it when you need it:
+`gcloud secrets versions access latest --secret=admin-token --project=ah-studio-chat`.
 
 `--env-vars-file` replaces the service's plain environment variables, so
 `env.yaml` must be complete. Secrets are attached with `--update-secrets` and
@@ -58,16 +62,26 @@ on the free tier; keys under a billed project need prepaid credit.
 ## Knowledge base
 
 Documents are scoped per site with the `site` query parameter (or inferred
-from `Origin`):
+from `Origin`). Writes need the admin token:
 
 ```bash
+TOKEN=$(gcloud secrets versions access latest --secret=admin-token --project=ah-studio-chat)
+API=https://chat-api-204227115712.us-central1.run.app
+
+# Crawl a site (orctech.ca is server-rendered, so this works)
+curl -X POST "$API/rag/crawl?site=orctech" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" -d '{"url": "https://orctech.ca", "max_pages": 30}'
+
+# Upload a document (allisonhe.ca is a client-rendered SPA, so it uses this)
 curl -X POST -F "file=@deployments/ah-studio/knowledge_base.md" \
-  "https://chat-api-204227115712.us-central1.run.app/rag/documents/upload?site=ah-studio"
-curl "https://chat-api-204227115712.us-central1.run.app/rag/documents?site=ah-studio"
+  -H "Authorization: Bearer $TOKEN" "$API/rag/documents/upload?site=ah-studio"
+
+curl "$API/rag/documents?site=ah-studio"
 ```
 
 A tenant without a `knowledge_base` block answers from its prompt alone; its
-document endpoints return `400`.
+document endpoints return `400`. Current knowledge bases: `ah-studio`
+(uploaded file, shared namespace) and `orctech` (crawled, namespace `orctech`).
 
 ## Local run with the same configuration
 

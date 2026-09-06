@@ -7,12 +7,17 @@ with the `site` query parameter, or inferred from the Origin header, or the
 default tenant.
 """
 
+import hmac
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, Request, UploadFile
 
+from app.config import get_settings
 from app.models.schemas import (
+    CrawlRequest,
+    CrawlResponse,
+    CrawledPage,
     DocumentUploadResponse,
     DocumentListResponse,
     DocumentDetailResponse,
@@ -22,6 +27,7 @@ from app.models.schemas import (
     RAGServiceStatus,
 )
 from app.services import (
+    crawler,
     document_service,
     storage_service,
     vector_store_service,
@@ -31,6 +37,21 @@ from app.tenants import KnowledgeBaseConfig, Tenant, TenantRegistry, get_registr
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/rag", tags=["rag"])
+
+
+def require_admin(authorization: Optional[str] = Header(None)) -> None:
+    """
+    Guard for endpoints that change a knowledge base.
+
+    Enforced only when ADMIN_TOKEN is configured; otherwise open (the app
+    warns at startup).
+    """
+    expected = get_settings().admin_token
+    if not expected:
+        return
+    scheme, _, token = (authorization or "").partition(" ")
+    if scheme.lower() != "bearer" or not hmac.compare_digest(token.strip(), expected):
+        raise HTTPException(status_code=401, detail="admin token required", headers={"WWW-Authenticate": "Bearer"})
 
 
 def knowledge_base_for(
@@ -45,7 +66,7 @@ def knowledge_base_for(
     return tenant, tenant.knowledge_base
 
 
-@router.post("/documents/upload", response_model=DocumentUploadResponse)
+@router.post("/documents/upload", response_model=DocumentUploadResponse, dependencies=[Depends(require_admin)])
 async def upload_document(
     file: UploadFile = File(...),
     kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for),
@@ -157,7 +178,7 @@ async def get_document(document_id: str, kb: tuple[Tenant, KnowledgeBaseConfig] 
         raise HTTPException(status_code=500, detail=f"Failed to get document: {str(e)}")
 
 
-@router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
+@router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse, dependencies=[Depends(require_admin)])
 async def delete_document(document_id: str, kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for)):
     """Remove a document: its stored file and all of its vectors."""
     _, config = kb
@@ -174,6 +195,64 @@ async def delete_document(document_id: str, kb: tuple[Tenant, KnowledgeBaseConfi
     except Exception as e:
         logger.error(f"Error deleting document {document_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
+
+
+@router.post("/crawl", response_model=CrawlResponse, dependencies=[Depends(require_admin)])
+async def crawl_site(
+    body: CrawlRequest,
+    kb: tuple[Tenant, KnowledgeBaseConfig] = Depends(knowledge_base_for),
+):
+    """
+    Build or refresh the site's knowledge base from its website.
+
+    Crawls same-host pages from the start URL, extracts readable text and
+    indexes one document per page. Page ids derive from the URL, so a repeat
+    crawl replaces pages instead of duplicating them. Client-rendered sites
+    yield little or nothing; upload documents for those instead.
+    """
+    tenant, config = kb
+    if not body.url.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="url must start with http:// or https://")
+
+    logger.info(f"Crawl for {tenant.id}: {body.url} (max_pages={body.max_pages}, max_depth={body.max_depth})")
+    try:
+        result = await crawler.crawl_site(body.url, max_pages=body.max_pages, max_depth=body.max_depth)
+    except Exception as e:
+        logger.error(f"Crawl failed for {body.url}: {e}")
+        raise HTTPException(status_code=502, detail=f"Crawl failed: {e}")
+
+    pages: list[CrawledPage] = []
+    total_chunks = 0
+    for page in result.pages:
+        try:
+            await document_service.delete_document(page.document_id, config.namespace, config.storage_prefix)
+        except Exception as e:
+            logger.debug(f"No previous version of {page.document_id} to remove: {e}")
+        try:
+            processed = await document_service.process_document(
+                document_id=page.document_id,
+                filename=crawler.filename_for(page.url),
+                content=f"{page.title}\n\n{page.text}".encode("utf-8"),
+                content_type="text/plain",
+                namespace=config.namespace,
+                storage_prefix=config.storage_prefix,
+                extra_metadata={"url": page.url, "title": page.title},
+            )
+        except ValueError as e:
+            result.skipped.append({"url": page.url, "reason": str(e)})
+            continue
+        pages.append(CrawledPage(url=page.url, title=page.title, document_id=page.document_id, chunks=processed["chunk_count"]))
+        total_chunks += processed["chunk_count"]
+
+    logger.info(f"Crawl complete for {tenant.id}: {len(pages)} pages, {total_chunks} chunks, {len(result.skipped)} skipped")
+    return CrawlResponse(
+        site=tenant.id,
+        start_url=result.start_url,
+        pages_indexed=len(pages),
+        chunks=total_chunks,
+        pages=pages,
+        skipped=result.skipped,
+    )
 
 
 @router.get("/status", response_model=RAGStatusResponse)

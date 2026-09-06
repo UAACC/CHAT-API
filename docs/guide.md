@@ -37,6 +37,7 @@ definition (see `deployments/`).
 | `MAX_MESSAGES_PER_SESSION` | `20` | Longest conversation accepted |
 | `MAX_CONTEXT_MESSAGES` | `10` | Messages actually sent to the model |
 | `PINECONE_API_KEY` / `PINECONE_INDEX` | – / `chat-api-rag` | Enables the knowledge base when the key is set |
+| `ADMIN_TOKEN` | – | Required as `Authorization: Bearer` on upload, delete and crawl; open with a warning when unset |
 | `GCS_BUCKET` / `GCS_PREFIX` | `chat-api-rag-documents` / `documents` | Where uploaded source documents are kept |
 | `RAG_DEFAULT_TOP_K` / `RAG_MIN_SCORE_THRESHOLD` | `5` / `0.1` | Retrieval depth and cut-off |
 | `APP_NAME`, `APP_ENV`, `LOG_LEVEL`, `PORT` | – | Housekeeping |
@@ -293,9 +294,30 @@ without context and a warning is logged.
 
 All document endpoints take an optional `?site=<id>` (or infer the tenant
 from `Origin`); a tenant without a `knowledge_base` block gets `400`.
+Endpoints that change the knowledge base require
+`Authorization: Bearer <ADMIN_TOKEN>` once `ADMIN_TOKEN` is set; leave it
+unset only for local experiments (the app warns at startup).
+
+### Building the knowledge base from the website
+
+```bash
+curl -X POST "https://<service>/rag/crawl?site=orctech" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{"url": "https://orctech.ca", "max_pages": 30, "max_depth": 3}'
+```
+
+The crawler stays on the start URL's host, honours `robots.txt`, seeds from
+`/sitemap.xml` when present, drops fragments and tracking parameters, and
+indexes one document per page with the page's `url` and `title` on every
+chunk. Document ids derive from the URL, so re-running the crawl refreshes
+pages in place. Pages with under 40 words are skipped, which also filters
+out client-rendered shells: a site that renders entirely in the browser (a
+Vite or Create React App SPA) yields no text to a plain fetch and should use
+document upload instead. The request is synchronous and capped at 200 pages.
 
 | Endpoint | Purpose |
 |----------|---------|
+| `POST /rag/crawl` | Crawl a website into the site's knowledge base (`url`, `max_pages`, `max_depth`) |
 | `POST /rag/documents/upload` | Multipart upload (PDF, Markdown, text); chunks and indexes the file |
 | `GET /rag/documents` | List indexed documents |
 | `GET /rag/documents/{id}` | Details for one document |

@@ -27,8 +27,9 @@ and knowledge base, matched by the request's `Origin`.
   LangChain; per site, switch with one line
 - **Prompt-first configuration**: site knowledge lives in a YAML file,
   never in code; English and Chinese prompts selected per request
-- **Optional knowledge base**: upload PDFs or Markdown, get retrieval-augmented
-  answers via Pinecone's integrated embeddings; degrades gracefully when absent
+- **Optional knowledge base**: crawl the site itself or upload PDFs and
+  Markdown, get retrieval-augmented answers via Pinecone's integrated
+  embeddings; degrades gracefully when absent
 - **Cost protection out of the box**: per-IP rate limiting, input and
   conversation length limits, context truncation
 - **Small and testable**: FastAPI, ~2k lines, a test suite that runs offline
@@ -108,6 +109,7 @@ Sites with their own design can instead talk to the API directly; see
 | `POST /chat/stream` | Streaming chat (SSE events `token`, `done`, `error`) |
 | `POST /chat` | Same request, single JSON reply |
 | `GET /health` | Liveness and active provider |
+| `POST /rag/crawl` | Build the knowledge base from a website (`{"url": "https://…"}`) |
 | `POST /rag/documents/upload`, `GET /rag/documents`, `DELETE /rag/documents/{id}` | Knowledge base management |
 | `GET /docs` | Interactive OpenAPI docs |
 
@@ -161,13 +163,14 @@ Details: [deployments/README.md](deployments/README.md).
 | `RATE_LIMIT_REQUESTS` / `RATE_LIMIT_WINDOW` | `20` / `60` | Per-IP limit per window (s) |
 | `MAX_INPUT_LENGTH`, `MAX_MESSAGES_PER_SESSION`, `MAX_CONTEXT_MESSAGES` | `500`, `20`, `10` | Size limits |
 | `PINECONE_API_KEY`, `PINECONE_INDEX` | – | Turns on the knowledge base |
+| `ADMIN_TOKEN` | – | Bearer token required to upload, delete or crawl; open (with a warning) when unset |
 
 Full reference: [docs/guide.md](docs/guide.md#configuration).
 
 ## Development
 
 ```bash
-pytest                      # 82 tests, no network, ~2 s
+pytest                      # 109 tests, no network, ~2 s
 docker build -t chat-api .  # what CI and Cloud Run build
 ```
 
@@ -179,7 +182,7 @@ app/
   config.py            shared settings (pydantic-settings)
   tenants.py           tenant model, YAML loader, per-request resolution
   routes/              chat, health, rag endpoints
-  services/            llm_service (providers, streaming), vector store, documents, storage
+  services/            llm_service (providers, streaming), crawler, vector store, documents, storage
   middleware/          in-memory rate limiter (per tenant and IP)
   prompts/             generic default prompts
   widget/              embeddable widget (widget.js) and demo page
@@ -190,7 +193,6 @@ docs/                  operator's guide and design specs
 
 ## Roadmap
 
-- Website crawler to build the knowledge base from a URL
 - Provider fallback when the primary model is overloaded
 
 ## License

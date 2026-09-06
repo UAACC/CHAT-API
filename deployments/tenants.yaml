@@ -152,6 +152,8 @@ tenants:
       model: gemini-3.1-flash-lite
       api_key_env: ORCTECH_GEMINI_API_KEY
       max_tokens: 512
+    knowledge_base:
+      namespace: orctech
     prompts:
       en: |
         You are the OrcTech Assistant, the friendly AI helper on orctech.ca, the website of OrcTech, a premium technology consulting firm for forward-thinking enterprises.

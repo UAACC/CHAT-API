@@ -231,6 +231,7 @@ async def process_document(
     content_type: str,
     namespace: str = "__default__",
     storage_prefix: Optional[str] = None,
+    extra_metadata: Optional[dict] = None,
 ) -> dict:
     """
     Process a document: parse, chunk, embed, and store.
@@ -242,6 +243,7 @@ async def process_document(
         content_type: MIME type of the file
         namespace: Pinecone namespace of the owning tenant
         storage_prefix: Storage folder of the owning tenant (default: global prefix)
+        extra_metadata: Extra fields stored on every chunk (e.g. source url)
 
     Returns:
         Processing result with document info and stats
@@ -281,14 +283,17 @@ async def process_document(
     records = []
     for i, chunk in enumerate(chunks):
         record_id = f"{document_id}_{i}"
-        records.append({
+        record = {
             "_id": record_id,
             "text": chunk,  # Pinecone will embed this field
             "document_id": document_id,
             "filename": filename,
             "chunk_index": i,
             "total_chunks": len(chunks),
-        })
+        }
+        if extra_metadata:
+            record.update({k: v for k, v in extra_metadata.items() if v is not None})
+        records.append(record)
 
     # Upsert to Pinecone (Pinecone handles embedding automatically)
     upserted_count = await vector_store_service.upsert_records(records, namespace)
